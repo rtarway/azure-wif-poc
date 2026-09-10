@@ -240,6 +240,116 @@ Azure Entra ID requires the SPIRE OIDC discovery documents (`/.well-known/openid
 
 ---
 
+## 🏢 Setting Up Cloud Foundry: Organization, Space, and CLI
+
+Before deploying the MCP Server, you need a **Cloud Foundry CLI**, an **Organization (`org`)**, and a **Space (`space`)**.
+
+```text
+               Cloud Foundry Hierarchy
+ ┌─────────────────────────────────────────────────────────────┐
+ │  Cloud Foundry API Endpoint (https://api.cf.example.com)    │
+ │                                                             │
+ │  Organization: azure-wif-org                                │
+ │     └─ Space: development                                   │
+ │           ├─ App:     azure-mcp-server (Low-Code MCP)       │
+ │           ├─ Service: azure-storage-binding (User-Provided) │
+ │           └─ Route:   azure-mcp-server.apps.example.com     │
+ └─────────────────────────────────────────────────────────────┘
+```
+
+### 1. Install the Cloud Foundry CLI (`cf`)
+If you do not have the `cf` CLI installed:
+- **macOS (Homebrew)**:
+  ```bash
+  brew install cloudfoundry/tap/cf-cli@8
+  ```
+- **Linux (Ubuntu/Debian)**:
+  ```bash
+  wget -q -O - https://packages.cloudfoundry.org/debian/cli.cloudfoundry.org.key | sudo apt-key add -
+  echo "deb https://packages.cloudfoundry.org/debian stable main" | sudo tee /etc/apt/sources.list.d/cloudfoundry-cli.list
+  sudo apt-get update && sudo apt-get install -y cf8-cli
+  ```
+- **Windows**:
+  ```powershell
+  winget install CloudFoundry.cli.v8
+  ```
+
+---
+
+### 2. Choose Your Cloud Foundry Target
+
+You have **two deployment target options**:
+
+#### Target A: Cloud Foundry on Azure / Tanzu Application Service (Enterprise / Cloud Host)
+Use this if you or your organization has a Cloud Foundry foundation (e.g. Tanzu Application Service on Azure, SAP BTP, or open-source Cloud Foundry).
+
+#### Target B: Local Cloud Foundry on Rancher Desktop using CF Korifi (Zero-Cost / Self-Contained)
+If you do not have an external Cloud Foundry account, you can run **Cloud Foundry directly inside your local Rancher Desktop cluster** using [CF Korifi](https://github.com/cloudfoundry/korifi) (the official Cloud Foundry on Kubernetes project):
+```bash
+# Install CF Korifi on your local Rancher Desktop Kubernetes
+helm repo add cloudfoundry https://cloudfoundry.github.io/korifi/
+helm repo update
+helm install korifi cloudfoundry/korifi \
+  --namespace korifi-system \
+  --create-namespace \
+  --set global.rootDomain="apps-127-0-0-1.nip.io"
+
+# Target local Korifi API
+cf api https://localhost:30443 --skip-ssl-validation
+```
+
+---
+
+### 3. Create the Organization and Space
+
+You can create the Organization and Space using either the automated script, the CLI, or the Apps Manager GUI:
+
+#### Option A: One-Click Setup Script (`./scripts/cf-setup-org-space.sh`)
+```bash
+# Set your CF API endpoint (default: https://api.cf.azure.example.com)
+export CF_API_URL="https://api.cf.azure.example.com"
+export CF_ORG="azure-wif-org"
+export CF_SPACE="development"
+
+# Run automated setup
+./scripts/cf-setup-org-space.sh
+```
+
+#### Option B: Step-by-Step Terminal Commands
+```bash
+# 1. Connect and log in to Cloud Foundry
+cf login -a https://api.cf.azure.example.com
+
+# 2. Create the Organization
+cf create-org azure-wif-org
+
+# 3. Create the Space within the Organization
+cf create-space development -o azure-wif-org
+
+# 4. Target the Organization and Space
+cf target -o azure-wif-org -s development
+
+# 5. Verify current target
+cf target
+# Output shows:
+#   api endpoint:   https://api.cf.azure.example.com
+#   org:            azure-wif-org
+#   space:          development
+```
+
+#### Option C: Cloud Foundry Apps Manager Web GUI
+1. Open your Cloud Foundry Apps Manager URL in your browser (e.g. `https://apps.cf.azure.example.com`).
+2. Log in with your admin or operator credentials.
+3. In the left navigation, click **Organizations** &rarr; click **+ Create Org**.
+4. Enter **Org Name**: `azure-wif-org` &rarr; click **Create**.
+5. Click into `azure-wif-org` &rarr; click the **Spaces** tab &rarr; click **+ Create Space**.
+6. Enter **Space Name**: `development` &rarr; click **Create**.
+7. In the Space settings, ensure your user account is assigned the **SpaceDeveloper** and **SpaceManager** roles.
+
+Once your Org and Space are targeted, proceed below to deploy the Low-Code MCP Server!
+
+---
+
 ## ☁️ Deploying the Low-Code MCP Server to Cloud Foundry
 
 The Azure Low-Code MCP Server exposes `tool1` (read/write on `app1` and `app2`) and `tool2` (read-only audit on `app1`) adhering to **MCP Protocol Specification July 2026 (`2026-07-15`)**.
