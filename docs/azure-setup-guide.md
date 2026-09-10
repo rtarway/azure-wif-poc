@@ -240,23 +240,122 @@ Azure Entra ID requires the SPIRE OIDC discovery documents (`/.well-known/openid
 
 ---
 
-## ☁️ Deploying the MCP Server to Cloud Foundry on Azure
+## ☁️ Deploying the Low-Code MCP Server with Tools
 
-The Low-Code MCP server can be deployed directly to Cloud Foundry on Azure (or Azure Container Apps):
+The Azure Low-Code MCP Server exposes `tool1` (read/write on `app1` and `app2`) and `tool2` (read-only audit on `app1`) adhering to **MCP Protocol Specification July 2026 (`2026-07-15`)**.
 
+You have **3 options** to deploy the MCP server to Azure infrastructure:
+- **Option 1**: Automated Deployment via Script / CI/CD (Cloud Foundry or GitHub Actions)
+- **Option 2**: Infrastructure-as-Code via Terraform (Optional, for Azure Container Apps)
+- **Option 3**: Manual Step-by-Step Deployment via Azure Portal (GUI Walkthrough)
+
+---
+
+### 🚀 MCP Option 1: Automated Deployment via Script or CI/CD (Recommended)
+
+#### A. One-Command Cloud Foundry Deployment (`./scripts/cf-deploy.sh`)
+If running Cloud Foundry on Azure (or Tanzu Application Service):
 ```bash
 # 1. Ensure you are logged into your Cloud Foundry environment
 cf login -a https://api.cf.azure.example.com -u <USER> -p <PASSWORD>
 
-# 2. Create the Azure Storage Service Binding
+# 2. Create the user-provided Azure Storage service binding
 cf cups azure-storage-binding -p '{
   "accountName": "azwifstoragepoc",
   "connectionString": "DefaultEndpointsProtocol=https;AccountName=azwifstoragepoc;..."
 }'
 
-# 3. Deploy via manifest.yml
+# 3. Deploy in one command via manifest.yml
 ./scripts/cf-deploy.sh
 ```
+
+#### B. Automated CI/CD Pipeline (GitHub Actions)
+The repository includes a ready-to-run GitHub Actions workflow in `.github/workflows/deploy-mcp.yml`:
+1. Every commit pushed to `main` runs the automated verification suite (`./scripts/test-all.sh`).
+2. When secrets (`CF_API_URL`, `CF_USERNAME`, `CF_PASSWORD`, `CF_ORG`, `CF_SPACE`) are configured in GitHub Repository Settings &rarr; Secrets, the workflow automatically logs in and executes `cf push -f manifest.yml`.
+
+---
+
+### 🏗️ MCP Option 2: Terraform Provisioning (Optional)
+
+> [!NOTE]
+> Terraform deployment for the MCP server is **optional** if you are already using Option 1 (CI/CD / `./scripts/cf-deploy.sh`).
+
+If you prefer deploying the MCP Server as an **Azure Container App** using Terraform:
+1. Open `azure/mcp-container-app.tf` and set:
+   ```hcl
+   variable "deploy_mcp_server_container_app" {
+     default = true
+   }
+   ```
+2. Run Terraform:
+   ```bash
+   cd azure
+   terraform apply -auto-approve
+   ```
+3. Terraform will provision:
+   - Log Analytics Workspace (`log-azure-wif-poc`)
+   - Container App Environment (`cae-azure-wif-poc`)
+   - Serverless Container App (`azure-mcp-server`) with external HTTPS ingress on port `8080`
+
+---
+
+### 🖥️ MCP Option 3: Manual Step-by-Step Deployment via Azure Portal
+
+To deploy the MCP Server directly using the **Azure Portal** ([portal.azure.com](https://portal.azure.com)):
+
+#### Step 1: Create an Azure Container App
+1. In the Azure Portal search bar, type **Container Apps** and select it.
+2. Click **+ Create** (top left).
+3. Under the **Basics** tab:
+   - **Subscription**: Select your active subscription.
+   - **Resource group**: Select `rg-azure-wif-poc`.
+   - **Container app name**: `azure-mcp-server`
+   - **Region**: Same region as your resource group (e.g. `East US`).
+   - **Container Apps Environment**: Click **Create new**:
+     - Environment name: `cae-azure-wif-poc`
+     - Click **Create**.
+4. Click **Next: Container >**.
+
+#### Step 2: Configure the Container & Declarative Tools
+1. In the **Container** tab:
+   - **Name**: `azure-mcp-server`
+   - **Image source**: Select `Docker Hub or other registries`.
+   - **Image type**: `Public` (or your private Azure Container Registry).
+   - **Image and tag**: `ghcr.io/rtarway/azure-mcp-server:v1.0.0` *(or your custom image built from `app/mcp-server/Dockerfile`)*.
+   - **CPU and Memory**: `0.25 vCPU, 0.5 GiB memory`.
+2. Under **Environment variables**, click **+ Add** to set the required runtime variables:
+   | Name | Value | Purpose |
+   | :--- | :--- | :--- |
+   | `PORT` | `8080` | Service listening port |
+   | `MCP_PROTOCOL_VERSION` | `2026-07-15` | MCP July 2026 specification |
+   | `AZURE_STORAGE_ACCOUNT` | `<YOUR_STORAGE_ACCOUNT_NAME>` | Storage account with `app1` & `app2` |
+   | `JWT_SECRET` | `demo-obo-token-secret-key-2026` | Secret for OBO token validation |
+   | `NODE_ENV` | `production` | Production mode |
+3. Click **Next: Ingress >**.
+
+#### Step 3: Configure Ingress & Networking
+1. In the **Ingress** tab:
+   - **Ingress**: Check **Enabled**.
+   - **Ingress traffic**: Select **Accepting traffic from anywhere** (External HTTP/HTTPS).
+   - **Target port**: `8080`
+   - **Transport**: `Auto` (or `HTTP/1.1` / `HTTP/2`).
+2. Click **Review + create**, then click **Create**. Wait for deployment to complete (~1-2 minutes).
+
+#### Step 4: Verify the Deployed MCP Server & Declarative Tools
+1. Once deployment succeeds, click **Go to resource**.
+2. On the **Overview** page, locate the **Application Url** (e.g. `https://azure-mcp-server.<unique_env>.eastus.azurecontainerapps.io`).
+3. Test health and declarative tools in your browser or curl:
+   - **Health Endpoint**:
+     ```bash
+     curl https://<YOUR_APP_URL>/healthz
+     # Output: {"status":"UP","protocolVersion":"2026-07-15","toolsRegistered":2}
+     ```
+   - **Declarative Tools List (MCP Protocol Spec 2026-07-15)**:
+     ```bash
+     curl https://<YOUR_APP_URL>/api/tools
+     ```
+     You will see `tool1` (read/write for `app1` and `app2`) and `tool2` (read-only audit for `app1`) automatically registered and active!
 
 ---
 
