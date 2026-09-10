@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Azure WIF & Agentic MCP POC</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --primary-hover: #0284c7;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --code-bg: #0b1120;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 24px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    h1 { font-size: 24px; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+    .subtitle { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
+    .badge-outside-spire { background: #6366f1; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .grid { display: grid; grid-template-columns: 360px 1fr; gap: 20px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-bottom: 20px; }
+    .card h2 { font-size: 16px; margin-bottom: 12px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .btn { background: var(--border); color: var(--text); border: none; padding: 10px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
+    .btn:hover { background: #475569; }
+    .btn-primary { background: var(--primary); color: #0f172a; font-weight: 600; }
+    .btn-primary:hover { background: var(--primary-hover); color: white; }
+    .btn-alice { border-left: 4px solid var(--primary); }
+    .btn-bob { border-left: 4px solid var(--warning); }
+    .btn-active { outline: 2px solid var(--primary); }
+    .user-pill { padding: 10px; border-radius: 6px; background: var(--code-bg); margin-top: 10px; border: 1px solid var(--border); }
+    .role-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-left: 6px; }
+    .role-admin { background: rgba(56, 189, 248, 0.2); color: var(--primary); border: 1px solid var(--primary); }
+    .role-regular { background: rgba(245, 158, 11, 0.2); color: var(--warning); border: 1px solid var(--warning); }
+    textarea { width: 100%; height: 80px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 10px; font-size: 13px; resize: vertical; margin-top: 8px; margin-bottom: 10px; }
+    textarea:focus { outline: 1px solid var(--primary); }
+    .quick-prompts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .quick-btn { text-align: left; font-size: 12px; padding: 8px 10px; background: rgba(255,255,255,0.05); }
+    .quick-btn:hover { background: rgba(255,255,255,0.1); }
+    .trace-step { background: var(--code-bg); border-left: 4px solid var(--border); border-radius: 4px; padding: 12px; margin-bottom: 12px; }
+    .trace-step.allowed { border-left-color: var(--success); }
+    .trace-step.denied { border-left-color: var(--danger); }
+    .trace-header { display: flex; justify-content: space-between; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+    pre { background: #050811; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 11px; color: #38bdf8; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+    .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+    .status-success { background: rgba(34, 197, 94, 0.2); color: var(--success); border: 1px solid var(--success); }
+    .status-failed { background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>
+        Azure WIF + Agentic Flow POC
+        <span class="badge-outside-spire">Frontend: Outside SPIRE</span>
+      </h1>
+      <div class="subtitle">
+        Keycloak IdP &bull; SPIRE + Istio Workload Identity &bull; RFC 8693 Downscoped OBO Exchange &bull; Low-Code Cloud Foundry MCP Server (July 2026 Spec)
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- Left Column: User & Auth -->
+      <div>
+        <div class="card">
+          <h2>1. Keycloak Authentication</h2>
+          <div style="display: flex; gap: 8px;">
+            <button id="btn-alice" class="btn btn-alice" style="flex:1;" onclick="login('alice')">
+              Alice (Admin)
+            </button>
+            <button id="btn-bob" class="btn btn-bob" style="flex:1;" onclick="login('bob')">
+              Bob (Regular)
+            </button>
+          </div>
+
+          <div id="user-info" class="user-pill" style="display: none;">
+            <div style="font-weight: 600; font-size: 13px;" id="user-name"></div>
+            <div style="color: var(--text-muted); font-size: 12px; margin-top: 2px;" id="user-email"></div>
+            <div style="margin-top: 6px; font-size: 11px;">
+              Allowed Scopes: <span style="color: var(--primary);" id="user-scopes"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>2. Architecture Matrix</h2>
+          <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6;">
+            <div>&bull; <b>Web Frontend</b>: Outside SPIRE (Direct Browser HTTP)</div>
+            <div>&bull; <b>Agent Orchestrator</b>: Inside SPIRE / Istio (SPIFFE SVID)</div>
+            <div>&bull; <b>Azure MCP Server</b>: Low-Code Cloud Foundry (July 2026)</div>
+            <div>&bull; <b>Tool1</b>: Read/Write app1 & app2 (All Users)</div>
+            <div>&bull; <b>Tool2</b>: Read app1 only (Admin Only)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Agent Prompt & Live Trace -->
+      <div>
+        <div class="card">
+          <h2>3. Agent Prompt & Intent Execution</h2>
+          <div class="quick-prompts">
+            <button class="btn quick-btn" onclick="setPrompt('Write new deployment status report to app2')">
+              ⚡ <b>Scenario A (Tool1)</b>: Write status report to app2 (Permitted for Bob & Alice)
+            </button>
+            <button class="btn quick-btn" onclick="setPrompt('Read quarterly financial report from app1')">
+              ⚡ <b>Scenario B (Tool1)</b>: Read financial data from app1 (Permitted for Bob & Alice)
+            </button>
+            <button class="btn quick-btn" onclick="setPrompt('Audit app1 compliance records with tool2')">
+              ⚡ <b>Scenario C (Tool2)</b>: Audit app1 with tool2 (Allowed for Alice, Rejected for Bob)
+            </button>
+          </div>
+
+          <label style="font-size: 12px; color: var(--text-muted);">Custom User Prompt:</label>
+          <textarea id="prompt-input" placeholder="Type instructions for the agent..."></textarea>
+          <button class="btn btn-primary" style="width: 100%;" onclick="submitPrompt()">
+            🚀 Submit Prompt to Agent Orchestrator
+          </button>
+        </div>
+
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
+            <h2 style="border: none; padding: 0; margin: 0;">4. Real-Time OBO Delegation & Token Chain</h2>
+            <div id="status-indicator"></div>
+          </div>
+
+          <div id="results-container" style="display: none;">
+            <!-- Step 1: User Token -->
+            <div class="trace-step">
+              <div class="trace-header">
+                <span>1. Human User Keycloak Identity</span>
+                <span style="color: var(--text-muted);">Subject Token</span>
+              </div>
+              <pre id="trace-user"></pre>
+            </div>
+
+            <!-- Step 2: SPIRE Identity -->
+            <div class="trace-step">
+              <div class="trace-header">
+                <span>2. Agent Workload Identity (SPIRE + Istio)</span>
+                <span style="color: var(--text-muted);">Actor Token</span>
+              </div>
+              <pre id="trace-agent"></pre>
+            </div>
+
+            <!-- Step 3: RFC 8693 Token Exchange -->
+            <div class="trace-step">
+              <div class="trace-header">
+                <span>3. RFC 8693 Downscoped OBO Token Exchange</span>
+                <span style="color: var(--primary);">sub + act claims</span>
+              </div>
+              <pre id="trace-obo"></pre>
+            </div>
+
+            <!-- Step 4: Azure MCP Server Execution -->
+            <div id="trace-mcp-step" class="trace-step">
+              <div class="trace-header">
+                <span>4. Azure Low-Code Cloud Foundry MCP Server (Spec 2026-07-15)</span>
+                <span id="trace-mcp-status"></span>
+              </div>
+              <pre id="trace-mcp"></pre>
+            </div>
+          </div>
+
+          <div id="empty-state" style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 30px;">
+            Select a user and submit a prompt to view the real-time identity propagation and downscoped OBO token chain.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentToken = null;
+    let currentUser = null;
+
+    async function login(userType) {
+      document.querySelectorAll('.btn-alice, .btn-bob').forEach(b => b.classList.remove('btn-active'));
+      const activeBtn = document.getElementById(userType === 'alice' ? 'btn-alice' : 'btn-bob');
+      if (activeBtn) activeBtn.classList.add('btn-active');
+
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userType })
+        });
+        const data = await res.json();
+        currentToken = data.token;
+        currentUser = data.user;
+
+        document.getElementById('user-info').style.display = 'block';
+        document.getElementById('user-name').innerHTML = `${currentUser.displayName} <span class="role-badge ${currentUser.roles.includes('admin') ? 'role-admin' : 'role-regular'}">${currentUser.roles.includes('admin') ? 'Admin' : 'Regular User'}</span>`;
+        document.getElementById('user-email').textContent = currentUser.email;
+        document.getElementById('user-scopes').textContent = currentUser.scopes.join(', ');
+      } catch (err) {
+        alert('Login failed: ' + err.message);
+      }
+    }
+
+    function setPrompt(text) {
+      document.getElementById('prompt-input').value = text;
+    }
+
+    async function submitPrompt() {
+      if (!currentToken) {
+        alert('Please login as Alice or Bob first.');
+        return;
+      }
+
+      const prompt = document.getElementById('prompt-input').value.trim();
+      if (!prompt) {
+        alert('Please enter a prompt.');
+        return;
+      }
+
+      document.getElementById('empty-state').style.display = 'none';
+      document.getElementById('results-container').style.display = 'block';
+      document.getElementById('status-indicator').innerHTML = '<span style="color: var(--primary); font-size: 12px;">Agent reasoning & executing...</span>';
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentToken}`
+          },
+          body: JSON.stringify({ prompt, token: currentToken })
+        });
+
+        const data = await res.json();
+
+        // 1. User Trace
+        document.getElementById('trace-user').textContent = JSON.stringify({
+          principal: data.user?.sub,
+          roles: data.user?.roles
+        }, null, 2);
+
+        // 2. Agent Trace
+        document.getElementById('trace-agent').textContent = JSON.stringify({
+          spiffeId: data.agent?.spiffeId,
+          workloadVerified: data.agent?.workloadVerified,
+          llmReasoning: data.plan?.reasoning
+        }, null, 2);
+
+        // 3. OBO Trace
+        document.getElementById('trace-obo').textContent = JSON.stringify({
+          delegationType: data.oboExchange?.delegationType,
+          subject: data.oboExchange?.subject,
+          actor: data.oboExchange?.actor,
+          downscopedScopes: data.oboExchange?.downscopedScopes,
+          tokenPreview: data.oboExchange?.tokenPreview
+        }, null, 2);
+
+        // 4. MCP Trace
+        const isError = data.mcpResponse?.isError;
+        const mcpStep = document.getElementById('trace-mcp-step');
+        mcpStep.className = 'trace-step ' + (isError ? 'denied' : 'allowed');
+
+        document.getElementById('trace-mcp-status').innerHTML = isError
+          ? '<span class="status-badge status-failed">MCP ERROR (DENIED)</span>'
+          : '<span class="status-badge status-success">ALLOWED</span>';
+
+        document.getElementById('trace-mcp').textContent = JSON.stringify(data.mcpResponse, null, 2);
+
+        document.getElementById('status-indicator').innerHTML = isError
+          ? '<span class="status-badge status-failed">Policy Denied</span>'
+          : '<span class="status-badge status-success">Execution Complete</span>';
+
+      } catch (err) {
+        document.getElementById('status-indicator').innerHTML = `<span class="status-badge status-failed">Error: ${err.message}</span>`;
+      }
+    }
+
+    // Default to Bob login on load
+    window.addEventListener('load', () => login('bob'));
+  </script>
+</body>
+</html>

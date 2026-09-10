@@ -1,0 +1,225 @@
+// Unit & Integration Tests for A2A Agent Orchestrator
+// Uses Node.js native test runner (node:test, node:assert)
+
+const { test, describe, before } = require('node:test');
+const assert = require('node:assert');
+const { Readable, Writable } = require('stream');
+const llmSimulator = require('../src/llmSimulator');
+const tokenExchange = require('../src/tokenExchange');
+const jwtUtil = require('../src/jwtUtil');
+const app = require('../src/index');
+
+const KEYCLOAK_SECRET = 'demo-obo-token-secret-key-2026';
+
+function mintKeycloakToken({ sub, email, roles }) {
+  return jwtUtil.sign(
+    {
+      sub,
+      email: email || sub,
+      preferred_username: sub.split('@')[0],
+      roles: roles || ['regular-user']
+    },
+    KEYCLOAK_SECRET,
+    { expiresInSeconds: 3600 }
+  );
+}
+
+function invokeApp(appInstance, { method = 'POST', url = '/api/agent/chat', headers = {}, body = null }) {
+  return new Promise((resolve, reject) => {
+    const req = new Readable();
+    req._read = () => {};
+    req.method = method;
+    req.url = url;
+
+    const normalizedHeaders = {};
+    for (const [k, v] of Object.entries(headers)) {
+      normalizedHeaders[k.toLowerCase()] = v;
+    }
+
+    const data = body ? (typeof body === 'string' ? body : JSON.stringify(body)) : '';
+    req.headers = {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(data).toString(),
+      ...normalizedHeaders
+    };
+
+    let responseData = '';
+    const res = new Writable();
+    res.statusCode = 200;
+    res._headers = {};
+    res.setHeader = (k, v) => { res._headers[k.toLowerCase()] = v; };
+    res.getHeader = (k) => res._headers[k.toLowerCase()];
+    res._write = (chunk, enc, cb) => {
+      responseData += chunk.toString();
+      cb();
+    };
+    res.writeHead = (code, headers = {}) => {
+      res.statusCode = code;
+      Object.assign(res._headers, headers);
+    };
+    res.end = (chunk) => {
+      if (chunk) responseData += chunk.toString();
+      try {
+        resolve({ statusCode: res.statusCode, body: JSON.parse(responseData) });
+      } catch {
+        resolve({ statusCode: res.statusCode, body: responseData });
+      }
+    };
+
+    appInstance.handle(req, res, reject);
+
+    process.nextTick(() => {
+      if (data) req.push(data);
+      req.push(null);
+    });
+  });
+}
+
+describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
+  before(() => {
+    // Inject mock MCP dispatcher into app.locals to test end-to-end routing without external sockets
+    app.locals.mcpDispatcher = async (toolName, toolArgs, oboToken) => {
+      const decoded = jwtUtil.decode(oboToken);
+      const scopes = (decoded.scope || '').split(' ');
+
+      if (toolName === 'tool2' && !scopes.includes('mcp:tool2')) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `MCP Authorization Denied: Principal '${decoded.sub}' lacks required scope 'mcp:tool2' for tool2.`
+            }
+          ],
+          audit: {
+            principal: decoded.sub,
+            actingAgent: decoded.act?.sub,
+            decision: 'DENIED_BY_POLICY'
+          }
+        };
+      }
+
+      return {
+        isError: false,
+        content: [
+          {
+            type: 'text',
+            text: `Simulated Azure Storage tool execution for ${toolName} on container ${toolArgs.container}`
+          }
+        ],
+        audit: {
+          principal: decoded.sub,
+          actingAgent: decoded.act?.sub,
+          decision: 'ALLOWED'
+        }
+      };
+    };
+  });
+
+  test('LLM Simulator accurately plans tool, container, and operation', () => {
+    // 1. Read app1
+    const plan1 = llmSimulator.plan('Read the quarterly financial report from app1', { sub: 'bob@example.com' });
+    assert.strictEqual(plan1.plannedTool, 'tool1');
+    assert.strictEqual(plan1.arguments.container, 'app1');
+    assert.strictEqual(plan1.arguments.action, 'read');
+
+    // 2. Write app2
+    const plan2 = llmSimulator.plan('Update customer retention metrics in app2', { sub: 'bob@example.com' });
+    assert.strictEqual(plan2.plannedTool, 'tool1');
+    assert.strictEqual(plan2.arguments.container, 'app2');
+    assert.strictEqual(plan2.arguments.action, 'write');
+    assert.ok(plan2.arguments.content);
+
+    // 3. Tool2 Audit
+    const plan3 = llmSimulator.plan('Audit app1 compliance records with tool2', { sub: 'alice@example.com' });
+    assert.strictEqual(plan3.plannedTool, 'tool2');
+    assert.strictEqual(plan3.arguments.container, 'app1');
+    assert.strictEqual(plan3.arguments.action, 'read');
+  });
+
+  test('RFC 8693 Token Exchange downscopes scopes for Regular User (Bob)', () => {
+    const bobKeycloakToken = mintKeycloakToken({
+      sub: 'bob@example.com',
+      roles: ['regular-user']
+    });
+
+    const exchangeResult = tokenExchange.exchangeToken({
+      userToken: bobKeycloakToken,
+      agentSvid: { spiffeId: 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa' },
+      requestedTool: 'tool1'
+    });
+
+    assert.strictEqual(exchangeResult.claims.sub, 'bob@example.com');
+    assert.strictEqual(exchangeResult.claims.act.sub, 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa');
+    assert.strictEqual(exchangeResult.claims.scope, 'mcp:tool1');
+    assert.strictEqual(exchangeResult.audit.grantedScopes.includes('mcp:tool2'), false);
+  });
+
+  test('RFC 8693 Token Exchange allows tool2 scope for Administrator (Alice)', () => {
+    const aliceKeycloakToken = mintKeycloakToken({
+      sub: 'alice@example.com',
+      roles: ['admin']
+    });
+
+    const exchangeResult = tokenExchange.exchangeToken({
+      userToken: aliceKeycloakToken,
+      agentSvid: { spiffeId: 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa' },
+      requestedTool: 'tool2'
+    });
+
+    assert.strictEqual(exchangeResult.claims.sub, 'alice@example.com');
+    assert.strictEqual(exchangeResult.claims.act.sub, 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa');
+    assert.strictEqual(exchangeResult.claims.scope, 'mcp:tool2');
+  });
+
+  test('End-to-End Chat: Bob successfully calls tool1 on app1/app2', async () => {
+    const bobToken = mintKeycloakToken({ sub: 'bob@example.com', roles: ['regular-user'] });
+
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/agent/chat',
+      headers: { Authorization: `Bearer ${bobToken}` },
+      body: { prompt: 'Write update to app2 container' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.status, 'COMPLETED_SUCCESSFULLY');
+    assert.strictEqual(res.body.oboExchange.subject, 'bob@example.com');
+    assert.strictEqual(res.body.oboExchange.actor, 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa');
+    assert.strictEqual(res.body.mcpResponse.isError, false);
+  });
+
+  test('End-to-End Chat: Bob fails tool2 with MCP Authorization Denied', async () => {
+    const bobToken = mintKeycloakToken({ sub: 'bob@example.com', roles: ['regular-user'] });
+
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/agent/chat',
+      headers: { Authorization: `Bearer ${bobToken}` },
+      body: { prompt: 'Audit app1 compliance using tool2' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.status, 'FAILED_POLICY_CHECK');
+    assert.strictEqual(res.body.mcpResponse.isError, true);
+    assert.ok(res.body.mcpResponse.content[0].text.includes("lacks required scope 'mcp:tool2'"));
+    assert.strictEqual(res.body.mcpResponse.audit.decision, 'DENIED_BY_POLICY');
+  });
+
+  test('End-to-End Chat: Alice successfully executes tool2 on app1', async () => {
+    const aliceToken = mintKeycloakToken({ sub: 'alice@example.com', roles: ['admin'] });
+
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/agent/chat',
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: { prompt: 'Audit app1 compliance using tool2' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.status, 'COMPLETED_SUCCESSFULLY');
+    assert.strictEqual(res.body.oboExchange.subject, 'alice@example.com');
+    assert.strictEqual(res.body.mcpResponse.isError, false);
+    assert.strictEqual(res.body.mcpResponse.audit.decision, 'ALLOWED');
+  });
+});
