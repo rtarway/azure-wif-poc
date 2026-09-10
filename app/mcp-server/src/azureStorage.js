@@ -1,7 +1,7 @@
 // Azure Blob Storage Backend for MCP Server
 // Supports:
-// 1. Cloud Foundry VCAP_SERVICES binding (e.g. azure-storage-service)
-// 2. Direct Azure Storage connection string or Managed Identity (AZURE_STORAGE_CONNECTION_STRING)
+// 1. Microsoft Foundry Managed Identity / Storage Connection (AZURE_STORAGE_CONNECTION_STRING / AZURE_STORAGE_ACCOUNT)
+// 2. Standard Azure Environment Bindings
 // 3. Built-in high-fidelity in-memory emulator for local verification without cloud credentials
 
 class AzureStorageService {
@@ -19,24 +19,26 @@ class AzureStorageService {
       }
     };
 
-    this.checkCloudFoundryServices();
+    this.checkAzureFoundryServices();
   }
 
-  checkCloudFoundryServices() {
-    // Detect Cloud Foundry VCAP_SERVICES bindings
-    if (process.env.VCAP_SERVICES) {
+  checkAzureFoundryServices() {
+    // Detect Azure / Microsoft Foundry Storage Configuration
+    if (process.env.AZURE_STORAGE_CONNECTION_STRING) {
+      this.connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+      console.log('[Microsoft Foundry] Bound to Azure Storage via connection string.');
+    } else if (process.env.VCAP_SERVICES) {
       try {
         const vcap = JSON.parse(process.env.VCAP_SERVICES);
-        // Look for user-provided-service or azure-storage
         const azureService = Object.values(vcap).flat().find(s =>
           s.name?.includes('azure-storage') || s.tags?.includes('azure-storage')
         );
         if (azureService && azureService.credentials) {
           this.connectionString = azureService.credentials.connectionString || azureService.credentials.primaryConnectionString;
-          console.log(`[Cloud Foundry] Successfully bound to Azure Storage via VCAP_SERVICES (${azureService.name}).`);
+          console.log(`[Storage] Bound via service credentials (${azureService.name}).`);
         }
       } catch (e) {
-        console.warn('[Cloud Foundry] Failed parsing VCAP_SERVICES:', e.message);
+        console.warn('[Storage] Failed parsing service credentials:', e.message);
       }
     }
   }

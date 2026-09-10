@@ -1,4 +1,4 @@
-// Unit and Integration Tests for Low-Code Cloud Foundry MCP Server
+// Unit and Integration Tests for Low-Code Microsoft Foundry MCP Server
 // Uses Node.js native test runner (node:test, node:assert) with in-process Express execution
 
 const { test, describe } = require('node:test');

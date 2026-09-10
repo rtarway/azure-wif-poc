@@ -1,6 +1,6 @@
 # End-to-End Architecture: Azure WIF & OBO Agentic Flow with Low-Code MCP
 
-This document details the security, identity, and architectural design of the **Agentic AI Ecosystem** deployed on **Rancher Desktop Kubernetes** accessing a **Low-Code Cloud Foundry Model Context Protocol (MCP) Server** for **Azure Cloud Storage**.
+This document details the security, identity, and architectural design of the **Agentic AI Ecosystem** deployed on **Rancher Desktop Kubernetes** accessing a **Low-Code Microsoft Foundry Model Context Protocol (MCP) Server** for **Azure Cloud Storage**.
 
 ---
 
@@ -42,7 +42,7 @@ This POC establishes zero-trust identity propagation across the entire invocatio
   - scope: "mcp:tool1" (downscoped by user role)
        │
        ▼ (5. tools/call with Bearer OBO JWT)
-[Azure Low-Code Cloud Foundry MCP Server (July 2026 Spec)]
+[Azure Low-Code Microsoft Foundry MCP Server (July 2026 Spec)]
        │
        ├──> Validates sub, act, and scope
        ├──> Tool1: Allowed (mcp:tool1 -> app1/app2 read/write)
@@ -92,7 +92,7 @@ When the agent prepares to invoke the MCP server:
    }
    ```
 
-### 3.5 Azure Low-Code Cloud Foundry MCP Server
+### 3.5 Azure Low-Code Microsoft Foundry MCP Server
 - **MCP Protocol Specification**: Implements protocol version `2026-07-15` (July 2026 release) with JSON-RPC 2.0 endpoints:
   - `initialize`: Protocol negotiation
   - `tools/list`: Declarative tool metadata
@@ -121,7 +121,7 @@ When the agent prepares to invoke the MCP server:
     }
   }
   ```
-- **Deployment**: Supports Cloud Foundry deployment via `manifest.yml` (`cf push`) using standard buildpacks, alongside local Kubernetes and Azure Container Apps deployment.
+- **Deployment**: Supports Microsoft Foundry deployment via project tool registration (`foundry.yaml` and `./scripts/foundry-deploy.sh`), alongside local Kubernetes deployment.
 
 ---
 

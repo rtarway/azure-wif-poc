@@ -1,7 +1,7 @@
 {
   "name": "azure-wif-poc",
   "version": "1.0.0",
-  "description": "POC for Agentic Flow on Rancher Desktop with SPIRE, Istio, Keycloak OBO Token Exchange, and Azure Low-Code Cloud Foundry MCP Server",
+  "description": "POC for Agentic Flow on Rancher Desktop with SPIRE, Istio, Keycloak OBO Token Exchange, and Azure Low-Code Microsoft Foundry MCP Server",
   "private": true,
   "scripts": {
     "test": "npm run test:mcp && npm run test:agent && npm run test:frontend",
@@ -17,7 +17,8 @@
     "azure-wif",
     "mcp",
     "rfc8693",
-    "cloud-foundry",
+    "microsoft-foundry",
+    "azure-ai-foundry",
     "a2a"
   ],
   "author": "",

@@ -12,7 +12,7 @@ echo "================================================================="
 echo " Running Automated Verification Suite for Azure WIF POC"
 echo "================================================================="
 
-echo "--> 1. Testing Low-Code Cloud Foundry MCP Server (Spec 2026-07-15)..."
+echo "--> 1. Testing Low-Code Microsoft Foundry MCP Server (Spec 2026-07-15)..."
 cd "${ROOT_DIR}/app/mcp-server"
 node --test test/*.test.js
 

@@ -23,8 +23,9 @@ This document provides a comprehensive, step-by-step guide for provisioning the 
  │     ├─ Container: app1 (Storage Blob Data Contributor)      │
  │     └─ Container: app2 (Storage Blob Data Contributor)      │
  │                                                             │
- │  4. Low-Code Cloud Foundry MCP Server (PaaS Cloud Host)     │
- │     └─ Cloud Foundry on Azure / Tanzu Application Service   │
+ │  4. Low-Code Microsoft Foundry MCP Server (Azure AI Foundry)│
+ │     ├─ Hub (Organization Boundary): hub-azure-wif-foundry   │
+ │     └─ Project (Space/Workspace):   proj-azure-wif-mcp      │
  └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -240,157 +241,123 @@ Azure Entra ID requires the SPIRE OIDC discovery documents (`/.well-known/openid
 
 ---
 
-## 🏢 Setting Up Cloud Foundry: Organization, Space, and CLI
+### 🏢 Setting Up Microsoft Foundry (Azure AI Foundry): Hub & Project
 
-Before deploying the MCP Server, you need a **Cloud Foundry CLI**, an **Organization (`org`)**, and a **Space (`space`)**.
+In Microsoft Foundry (accessible at [ai.azure.com](https://ai.azure.com)), infrastructure and governance follow a hierarchical model:
+- **Foundry Hub (Organization / Team Boundary)**: Centralizes security, Entra ID authentication, compute, networking, and governance policies.
+- **Foundry Project (Workspace / Space Boundary)**: The collaborative development workspace where agents, declarative tools, datasets, and endpoints reside.
 
 ```text
-               Cloud Foundry Hierarchy
+               Microsoft Foundry Hierarchy
  ┌─────────────────────────────────────────────────────────────┐
- │  Cloud Foundry API Endpoint (https://api.cf.example.com)    │
+ │  Microsoft Foundry Portal (https://ai.azure.com)            │
  │                                                             │
- │  Organization: azure-wif-org                                │
- │     └─ Space: development                                   │
- │           ├─ App:     azure-mcp-server (Low-Code MCP)       │
- │           ├─ Service: azure-storage-binding (User-Provided) │
- │           └─ Route:   azure-mcp-server.apps.example.com     │
+ │  Hub (Organization Boundary): hub-azure-wif-foundry        │
+ │     └─ Project (Space/Workspace): proj-azure-wif-mcp        │
+ │           ├─ MCP Service:  azure-mcp-server (tools.yaml)    │
+ │           ├─ Data Storage: Azure Blob Storage (app1 & app2) │
+ │           └─ Endpoint:     https://proj-azure-wif-mcp...    │
  └─────────────────────────────────────────────────────────────┘
 ```
 
-### 1. Install the Cloud Foundry CLI (`cf`)
-If you do not have the `cf` CLI installed:
-- **macOS (Homebrew)**:
-  ```bash
-  brew install cloudfoundry/tap/cf-cli@8
-  ```
-- **Linux (Ubuntu/Debian)**:
-  ```bash
-  wget -q -O - https://packages.cloudfoundry.org/debian/cli.cloudfoundry.org.key | sudo apt-key add -
-  echo "deb https://packages.cloudfoundry.org/debian stable main" | sudo tee /etc/apt/sources.list.d/cloudfoundry-cli.list
-  sudo apt-get update && sudo apt-get install -y cf8-cli
-  ```
-- **Windows**:
-  ```powershell
-  winget install CloudFoundry.cli.v8
-  ```
-
 ---
 
-### 2. Choose Your Cloud Foundry Target
+### 1. Provisioning Microsoft Foundry Hub & Project
 
-You have **two deployment target options**:
+You can provision your Microsoft Foundry Hub and Project using an automated script, the Azure CLI, or the Microsoft Foundry Web Portal:
 
-#### Target A: Cloud Foundry on Azure / Tanzu Application Service (Enterprise / Cloud Host)
-Use this if you or your organization has a Cloud Foundry foundation (e.g. Tanzu Application Service on Azure, SAP BTP, or open-source Cloud Foundry).
-
-#### Target B: Local Cloud Foundry on Rancher Desktop using CF Korifi (Zero-Cost / Self-Contained)
-If you do not have an external Cloud Foundry account, you can run **Cloud Foundry directly inside your local Rancher Desktop cluster** using [CF Korifi](https://github.com/cloudfoundry/korifi) (the official Cloud Foundry on Kubernetes project):
+#### Option A: One-Click Setup Script (`./scripts/foundry-setup-project.sh`)
 ```bash
-# Install CF Korifi on your local Rancher Desktop Kubernetes
-helm repo add cloudfoundry https://cloudfoundry.github.io/korifi/
-helm repo update
-helm install korifi cloudfoundry/korifi \
-  --namespace korifi-system \
-  --create-namespace \
-  --set global.rootDomain="apps-127-0-0-1.nip.io"
-
-# Target local Korifi API
-cf api https://localhost:30443 --skip-ssl-validation
-```
-
----
-
-### 3. Create the Organization and Space
-
-You can create the Organization and Space using either the automated script, the CLI, or the Apps Manager GUI:
-
-#### Option A: One-Click Setup Script (`./scripts/cf-setup-org-space.sh`)
-```bash
-# Set your CF API endpoint (default: https://api.cf.azure.example.com)
-export CF_API_URL="https://api.cf.azure.example.com"
-export CF_ORG="azure-wif-org"
-export CF_SPACE="development"
+# Optional overrides (defaults to rg-azure-wif-demo and eastus)
+export AZURE_RESOURCE_GROUP="rg-azure-wif-demo"
+export AZURE_LOCATION="eastus"
+export FOUNDRY_HUB_NAME="hub-azure-wif-foundry"
+export FOUNDRY_PROJECT_NAME="proj-azure-wif-mcp"
 
 # Run automated setup
-./scripts/cf-setup-org-space.sh
+./scripts/foundry-setup-project.sh
 ```
 
-#### Option B: Step-by-Step Terminal Commands
+#### Option B: Step-by-Step Terminal Commands (Azure CLI)
 ```bash
-# 1. Connect and log in to Cloud Foundry
-cf login -a https://api.cf.azure.example.com
+# 1. Log in to Azure
+az login
 
-# 2. Create the Organization
-cf create-org azure-wif-org
+# 2. Ensure your target Resource Group exists
+az group create --name rg-azure-wif-demo --location eastus
 
-# 3. Create the Space within the Organization
-cf create-space development -o azure-wif-org
+# 3. Create the Microsoft Foundry Hub (AIServices account)
+az cognitiveservices account create \
+  --name hub-azure-wif-foundry \
+  --resource-group rg-azure-wif-demo \
+  --location eastus \
+  --kind "AIServices" \
+  --sku "S0" \
+  --yes
 
-# 4. Target the Organization and Space
-cf target -o azure-wif-org -s development
-
-# 5. Verify current target
-cf target
-# Output shows:
-#   api endpoint:   https://api.cf.azure.example.com
-#   org:            azure-wif-org
-#   space:          development
+# 4. View Hub Endpoint and Status
+az cognitiveservices account show \
+  --name hub-azure-wif-foundry \
+  --resource-group rg-azure-wif-demo \
+  --query "properties.endpoint" -o tsv
 ```
 
-#### Option C: Cloud Foundry Apps Manager Web GUI
-1. Open your Cloud Foundry Apps Manager URL in your browser (e.g. `https://apps.cf.azure.example.com`).
-2. Log in with your admin or operator credentials.
-3. In the left navigation, click **Organizations** &rarr; click **+ Create Org**.
-4. Enter **Org Name**: `azure-wif-org` &rarr; click **Create**.
-5. Click into `azure-wif-org` &rarr; click the **Spaces** tab &rarr; click **+ Create Space**.
-6. Enter **Space Name**: `development` &rarr; click **Create**.
-7. In the Space settings, ensure your user account is assigned the **SpaceDeveloper** and **SpaceManager** roles.
+#### Option C: Microsoft Foundry Web Portal GUI
+1. Open the [Microsoft Foundry Portal](https://ai.azure.com) in your web browser.
+2. Sign in with your Azure tenant credentials.
+3. In the top navigation bar, ensure **Foundry** (or **Hubs**) is selected.
+4. Click **+ New Hub**:
+   - **Hub Name**: `hub-azure-wif-foundry`
+   - **Subscription**: Your active Azure subscription
+   - **Resource Group**: `rg-azure-wif-demo`
+   - **Region**: `East US`
+   - Click **Create**.
+5. Once the Hub is created, navigate into it and click **+ New Project**:
+   - **Project Name**: `proj-azure-wif-mcp`
+   - Click **Create Project**.
 
-Once your Org and Space are targeted, proceed below to deploy the Low-Code MCP Server!
+Your Microsoft Foundry environment is now ready for tool and MCP server deployment!
 
 ---
 
-## ☁️ Deploying the Low-Code MCP Server to Cloud Foundry
+## ☁️ Deploying the Low-Code MCP Server to Microsoft Foundry
 
 The Azure Low-Code MCP Server exposes `tool1` (read/write on `app1` and `app2`) and `tool2` (read-only audit on `app1`) adhering to **MCP Protocol Specification July 2026 (`2026-07-15`)**.
 
-As per architectural design, the MCP server is deployed strictly to **Cloud Foundry** (PaaS on Azure / Tanzu Application Service).
-
-You have **3 options** to deploy to Cloud Foundry:
-- **Option 1**: Automated Deployment via Script / CI/CD (`cf push` or GitHub Actions)
-- **Option 2**: Infrastructure-as-Code via Cloud Foundry Terraform (`azure/mcp-cloud-foundry.tf`) *(Optional)*
-- **Option 3**: Manual Step-by-Step Deployment via Cloud Foundry Apps Manager GUI or Manual CLI
+You have **3 options** to deploy to Microsoft Foundry:
+- **Option 1**: Automated Deployment via Script / CI/CD (`./scripts/foundry-deploy.sh` or GitHub Actions)
+- **Option 2**: Infrastructure-as-Code via Terraform (`azure/mcp-microsoft-foundry.tf`) *(Optional)*
+- **Option 3**: Manual Step-by-Step Deployment via Microsoft Foundry Portal (`https://ai.azure.com`)
 
 ---
 
-### 🚀 CF Option 1: Automated Deployment via Script or CI/CD (Recommended)
+### 🚀 Foundry Option 1: Automated Deployment via Script or CI/CD (Recommended)
 
-#### A. One-Command Cloud Foundry Deployment Script (`./scripts/cf-deploy.sh`)
+#### A. Automated Deployment Script (`./scripts/foundry-deploy.sh`)
 ```bash
-# 1. Ensure you are logged into your Cloud Foundry environment
-cf login -a https://api.cf.azure.example.com -u <USER> -p <PASSWORD>
+# 1. Ensure you are logged into Azure
+az login
 
-# 2. Deploy in one command (automatically configures service binding and pushes manifest.yml)
-./scripts/cf-deploy.sh
+# 2. Deploy Low-Code MCP Server to Microsoft Foundry Project
+./scripts/foundry-deploy.sh
 ```
 
 #### B. Automated CI/CD Pipeline (GitHub Actions)
 The repository includes an automated GitHub Actions workflow in `.github/workflows/deploy-mcp.yml`:
 1. Every commit pushed to `main` runs the full verification test suite (`./scripts/test-all.sh`).
-2. When your Cloud Foundry secrets (`CF_API_URL`, `CF_USERNAME`, `CF_PASSWORD`, `CF_ORG`, `CF_SPACE`) are added to GitHub Repository Settings &rarr; Secrets, the workflow automatically authenticates and deploys via `cf push -f manifest.yml`.
+2. When Azure credentials (`AZURE_CREDENTIALS`, `AZURE_RESOURCE_GROUP`, `FOUNDRY_HUB_NAME`, `FOUNDRY_PROJECT_NAME`) are set in GitHub Repository Secrets, the workflow automatically deploys declarative tools and MCP services to Microsoft Foundry.
 
 ---
 
-### 🏗️ CF Option 2: Cloud Foundry Terraform Provisioning (Optional)
+### 🏗️ Foundry Option 2: Terraform Provisioning (Optional)
 
 > [!NOTE]
-> Terraform deployment for Cloud Foundry is **optional** if you already use Option 1 (CI/CD or `./scripts/cf-deploy.sh`).
+> Terraform deployment for Microsoft Foundry is **optional** if you already use Option 1 (CI/CD or `./scripts/foundry-deploy.sh`).
 
-If your team manages Cloud Foundry application instances and service bindings via Terraform, use [azure/mcp-cloud-foundry.tf](file:///Users/rtarway/mygithubprojects/azure-wif-poc/azure/mcp-cloud-foundry.tf):
-
-1. Set the deployment flag in `azure/mcp-cloud-foundry.tf`:
+To provision Microsoft Foundry resources and deploy the MCP server via Terraform:
+1. Enable the deployment flag in [azure/mcp-microsoft-foundry.tf](file:///Users/rtarway/mygithubprojects/azure-wif-poc/azure/mcp-microsoft-foundry.tf):
    ```hcl
-   variable "deploy_mcp_to_cf_via_terraform" {
+   variable "deploy_mcp_to_foundry_via_terraform" {
      default = true
    }
    ```
@@ -400,90 +367,42 @@ If your team manages Cloud Foundry application instances and service bindings vi
    terraform apply -auto-approve
    ```
 3. Terraform will provision:
-   - User-Provided Service instance `azure-storage-binding` containing your Azure Storage credentials.
-   - Triggers declarative `cf push` deploying `app/mcp-server` with `manifest.yml`.
+   - Microsoft Foundry Hub (`azurerm_cognitive_account` with kind `AIServices`).
+   - Assign `Storage Blob Data Contributor` to the Foundry identity on `app1` and `app2`.
+   - Register the declarative MCP server tools within the Foundry Project.
 
 ---
 
-### 🖥️ CF Option 3: Manual Step-by-Step Deployment to Cloud Foundry
+### 🖥️ Foundry Option 3: Manual Step-by-Step Deployment via Portal
 
-If you prefer deploying step-by-step using the **Cloud Foundry Apps Manager Web GUI** (or sequential manual terminal commands):
+If you prefer configuring step-by-step using the **Microsoft Foundry Web Portal**:
 
-#### Method A: Graphical Deployment via Cloud Foundry Apps Manager GUI
-1. Open your Cloud Foundry Apps Manager console in your browser (e.g. `https://apps.cf.azure.example.com`).
-2. Select your **Organization** (`myorg`) and **Space** (`development`).
-3. **Create the Azure Storage User-Provided Service**:
-   - In the left sidebar, click **Services** &rarr; select **User-Provided Services**.
-   - Click **+ Add User-Provided Service**.
-   - **Service Name**: `azure-storage-binding`
-   - **Credentials JSON**:
-     ```json
-     {
-       "accountName": "<YOUR_AZURE_STORAGE_ACCOUNT_NAME>",
-       "connectionString": "DefaultEndpointsProtocol=https;AccountName=<YOUR_STORAGE_ACCOUNT_NAME>;..."
-     }
-     ```
-   - Click **Save**.
-4. **Deploy the Application**:
-   - In the left sidebar, click **Applications** &rarr; click **+ Create Application**.
-   - **Application Name**: `azure-mcp-server`
-   - **Buildpack**: `nodejs_buildpack`
-   - **Memory**: `512 MB`, **Disk**: `1024 MB`, **Instances**: `1`.
-   - **Route**: `azure-mcp-server.apps.azure.example.com`
-5. **Bind the Service to the App**:
-   - Navigate to `azure-mcp-server` &rarr; click the **Services** tab.
-   - Click **Bind Service** &rarr; choose `azure-storage-binding` &rarr; click **Bind**.
-6. **Set Environment Variables**:
-   - Navigate to the **Variables** tab &rarr; **User-Provided Environment Variables**:
-     | Variable Name | Value | Purpose |
-     | :--- | :--- | :--- |
-     | `PORT` | `8080` | Server listening port |
-     | `MCP_PROTOCOL_VERSION` | `2026-07-15` | MCP July 2026 protocol specification |
-     | `AZURE_STORAGE_ACCOUNT` | `<YOUR_STORAGE_ACCOUNT_NAME>` | Storage account name |
-     | `JWT_SECRET` | `demo-obo-token-secret-key-2026` | OBO Token validation secret |
-     | `NODE_ENV` | `production` | Production environment |
-   - Click **Save and Restart Application**.
+1. Open [ai.azure.com](https://ai.azure.com) and navigate to your project (`proj-azure-wif-mcp`).
+2. In the left menu under **Build & Customize**, select **Tools & Toolboxes** (or **Custom Tools**).
+3. Click **+ Add Custom Tool** &rarr; select **Model Context Protocol (MCP)**.
+4. Provide the tool configuration:
+   - **Tool Name**: `azure-mcp-server`
+   - **Protocol Version**: `2026-07-15`
+   - **Tool Definition File**: Upload [app/mcp-server/tools.yaml](file:///Users/rtarway/mygithubprojects/azure-wif-poc/app/mcp-server/tools.yaml).
+5. **Connect Storage**:
+   - Under **Data Connections**, select your Azure Storage Account (`azwifstoragepoc`).
+   - Grant read/write access to `app1` and `app2` containers.
+6. **Save & Publish**:
+   - Click **Save & Register Tools**.
+   - Microsoft Foundry registers `tool1` and `tool2` and provides an active HTTPS MCP endpoint.
 
-#### Method B: Manual Sequential CF CLI Commands
-If running each step manually in your terminal:
-```bash
-# 1. Target your Cloud Foundry org & space
-cf login -a https://api.cf.azure.example.com -u <USER> -p <PASSWORD> -o myorg -s development
-
-# 2. Create the User-Provided Service with Azure Storage credentials
-cf cups azure-storage-binding -p '{
-  "accountName": "<YOUR_STORAGE_ACCOUNT_NAME>",
-  "connectionString": "DefaultEndpointsProtocol=https;AccountName=<YOUR_STORAGE_ACCOUNT_NAME>;..."
-}'
-
-# 3. Push application files from app/mcp-server
-cd app/mcp-server
-cf push azure-mcp-server -m 512M -k 1G -b nodejs_buildpack
-
-# 4. Bind the Azure Storage service to the app
-cf bind-service azure-mcp-server azure-storage-binding
-
-# 5. Set environment variables
-cf set-env azure-mcp-server PORT 8080
-cf set-env azure-mcp-server MCP_PROTOCOL_VERSION 2026-07-15
-cf set-env azure-mcp-server AZURE_STORAGE_ACCOUNT <YOUR_STORAGE_ACCOUNT_NAME>
-cf set-env azure-mcp-server JWT_SECRET demo-obo-token-secret-key-2026
-cf set-env azure-mcp-server NODE_ENV production
-
-# 6. Restage to apply service binding & environment variables
-cf restage azure-mcp-server
-```
-
-#### Step 4: Verify the Deployed Cloud Foundry MCP Server
+#### Step 4: Verify the Deployed MCP Server
 Once deployed, verify the endpoint over HTTPS:
 - **Health check**:
   ```bash
-  curl https://azure-mcp-server.apps.azure.example.com/healthz
-  # Output: {"status":"UP","platform":"Cloud Foundry","protocolVersion":"2026-07-15","toolsRegistered":2}
+  curl https://proj-azure-wif-mcp.services.ai.azure.com/healthz
+  # Output: {"status":"UP","platform":"Microsoft Foundry","protocolVersion":"2026-07-15","toolsRegistered":2}
   ```
 - **Declarative Tools List (MCP Protocol Spec 2026-07-15)**:
   ```bash
-  curl https://azure-mcp-server.apps.azure.example.com/api/tools
+  curl -X POST https://proj-azure-wif-mcp.services.ai.azure.com/mcp \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
   ```
   You will see `tool1` (read/write on `app1` and `app2`) and `tool2` (read-only audit on `app1`) automatically registered and active!
 

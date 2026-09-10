@@ -1,6 +1,6 @@
-# Low-Code Declarative MCP & Cloud Foundry Deployment Guide
+# Low-Code Declarative MCP & Microsoft Foundry Deployment Guide
 
-This guide explains how tools are defined declaratively without boilerplate and deployed to **Cloud Foundry** on Azure or local Kubernetes.
+This guide explains how tools are defined declaratively without boilerplate and deployed to **Microsoft Foundry** (Azure AI Foundry at `https://ai.azure.com`).
 
 ---
 
@@ -84,39 +84,40 @@ To add a new tool (e.g. `tool3` for analytics):
 
 ---
 
-## 2. Cloud Foundry Deployment (`manifest.yml`)
+## 2. Microsoft Foundry Project Manifest (`foundry.yaml`)
 
-The MCP server is packaged for standard Cloud Foundry (`cf push`) environments:
+The MCP server is packaged for Microsoft Foundry (Azure AI Foundry) project environments:
 
 ```yaml
----
-applications:
-  - name: azure-mcp-server
-    memory: 512M
-    disk_quota: 1G
-    instances: 1
-    buildpack: nodejs_buildpack
-    command: npm start
-    routes:
-      - route: azure-mcp-server.apps.azure.example.com
-    env:
-      NODE_ENV: production
-      PORT: 8080
-      MCP_PROTOCOL_VERSION: "2026-07-15"
-      AZURE_STORAGE_ACCOUNT: "azwifstoragepoc"
-      JWT_SECRET: "demo-obo-token-secret-key-2026"
-    services:
-      - azure-storage-binding
+name: azure-mcp-server
+version: 1.0.0
+protocol: mcp
+protocol_version: "2026-07-15"
+
+foundry:
+  project: proj-azure-wif-mcp
+  hub: hub-azure-wif-foundry
+  service_type: custom-mcp-tool-service
+
+runtime:
+  language: nodejs
+  version: "20"
+  entrypoint: src/index.js
+  port: 8080
+
+environment:
+  MCP_PROTOCOL_VERSION: "2026-07-15"
+  AZURE_STORAGE_ACCOUNT: "azwifstoragepoc"
+
+tools:
+  declarative_spec: tools.yaml
 ```
 
 ### Deployment Steps
 ```bash
-# 1. Login to Cloud Foundry
-cf login -a https://api.cf.azure.example.com -u user -p password -o myorg -s dev
+# 1. Setup Microsoft Foundry Hub and Project (if not already done)
+./scripts/foundry-setup-project.sh
 
-# 2. Create User-Provided Service for Azure Blob Storage
-cf cups azure-storage-binding -p '{"accountName":"azwifstoragepoc","connectionString":"DefaultEndpointsProtocol=https;..."}'
-
-# 3. Deploy MCP Server in 1 command
-./scripts/cf-deploy.sh
+# 2. Deploy MCP Server and declarative tools to Microsoft Foundry
+./scripts/foundry-deploy.sh
 ```
