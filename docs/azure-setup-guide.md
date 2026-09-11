@@ -394,15 +394,20 @@ Now that you have your live HTTPS MCP endpoint URL, connect it in the Microsoft 
 
 1. Open **[ai.azure.com](https://ai.azure.com)** and enter your project (`proj-azure-wif-mcp`).
 2. In the left sidebar navigation, click **Build** &rarr; select **Tools** (or within your agent's configuration, click **+ Add tool**).
-3. Click **Connect a tool** &rarr; choose **Model Context Protocol (MCP)**.
-4. Fill in the connection form:
-   - **Name**: `azure-storage-mcp`
+3. Click **Connect a tool** &rarr; select **Model Context Protocol (MCP)**.
+4. Fill in the connection form fields:
+   - **Name**: Enter `azure-storage-mcp`
    - **Remote MCP Server endpoint**: Paste your endpoint URL (e.g. `https://azure-mcp-server-xxxx.azurewebsites.net/mcp`)
    - **Authentication**:
      - For production/OBO: Select **OAuth Identity Passthrough** (or **Microsoft Entra** with Project Managed Identity).
      - For initial POC verification: Select **None** / **Anonymous** or **Key-based**.
-5. Click **Connect** (or **Create** / **Save**).
-6. Microsoft Foundry immediately contacts your endpoint, performs the protocol version `2026-07-15` handshake (`initialize`), calls `tools/list`, and loads your declarative tools:
+5. Look at the **bottom-right corner** of the dialog/drawer for the blue **"Create"** button:
+   > [!NOTE]
+   > - The button is labeled **"Create"** (or **"Add"** depending on your portal view), NOT "Connect" or "Save".
+   > - If you do not see it immediately, **scroll down to the bottom** of the slide-out panel.
+   > - The button will remain **disabled / greyed out** until a name and a valid `https://...` URL are typed into the endpoint field.
+6. Click **Create**:
+   Microsoft Foundry immediately contacts your endpoint, performs the protocol version `2026-07-15` handshake (`initialize`), calls `tools/list`, and loads your declarative tools:
    - `tool1`: Read/Write access to containers `app1` and `app2`.
    - `tool2`: Read-only audit access to container `app1`.
 
