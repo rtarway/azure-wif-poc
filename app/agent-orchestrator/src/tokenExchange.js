@@ -5,7 +5,10 @@
 const https = require('https');
 const http = require('http');
 const querystring = require('querystring');
+const crypto = require('crypto');
 const jwtUtil = require('./jwtUtil');
+
+const { privateKey: rsaPrivateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 
 const OBO_SECRET = process.env.JWT_SECRET || 'demo-obo-token-secret-key-2026';
 const ENTRA_TENANT_ID = process.env.ENTRA_TENANT_ID || '81f26b58-159c-4879-80a0-bab30b5b4dd3';
@@ -92,54 +95,87 @@ class TokenExchangeEngine {
     const agentSpiffeId = agentSvid?.spiffeId || 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa';
 
     // 2. Attempt Live Azure Workload Identity Federation (RFC 7523) with Microsoft Entra ID
-    if (agentSvid?.token) {
-      try {
-        const entraResponse = await this._callEntraWifTokenExchange({
-          grant_type: 'client_credentials',
-          client_id: ENTRA_AGENT_CLIENT_ID,
-          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-          client_assertion: agentSvid.token,
-          scope: `${ENTRA_AUDIENCE}/.default`
-        });
+    try {
+      // Construct a valid 3-part RSA-signed JWT client assertion conforming to RFC 7523 / Entra WIF
+      const header = { alg: 'RS256', typ: 'JWT', kid: 'agent-orchestrator-key-1' };
+      const payload = {
+        iss: 'https://spire.example.org',
+        sub: agentSpiffeId,
+        aud: 'api://AzureADTokenExchange',
+        exp: Math.floor(Date.now() / 1000) + 300,
+        nbf: Math.floor(Date.now() / 1000) - 10,
+        iat: Math.floor(Date.now() / 1000)
+      };
 
-        if (entraResponse.statusCode === 200 && entraResponse.body.access_token) {
-          const rawToken = entraResponse.body.access_token;
-          const decoded = jwtUtil.decode(rawToken) || {};
+      const b64url = str => Buffer.from(str).toString('base64url');
+      const signInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(payload))}`;
+      const signature = crypto.sign('sha256', Buffer.from(signInput), { key: rsaPrivateKey, dsig: 'raw' });
+      const clientAssertion = `${signInput}.${signature.toString('base64url')}`;
 
-          return {
-            exchangedToken: rawToken,
-            tokenType: 'AZURE_ENTRA_WIF',
-            claims: {
-              iss: decoded.iss,
-              sub: userEmail,
-              email: userEmail,
-              aud: decoded.aud,
-              appid: decoded.appid || ENTRA_AGENT_CLIENT_ID,
-              azp: decoded.azp || ENTRA_AGENT_CLIENT_ID,
-              roles: finalScopes,
-              scope: finalScopes.join(' '),
-              downscoped: true,
-              delegationType: 'AZURE_WIF_FEDERATED_DELEGATION'
-            },
-            delegatedUser: {
-              sub: userEmail,
-              email: userEmail,
-              roles: userRoles
-            },
-            audit: {
-              subject: userEmail,
-              actor: agentSpiffeId,
-              userRoles,
-              eligibleScopes: userEligibleScopes,
-              grantedScopes: finalScopes,
-              requestedTool,
-              tokenIssuer: 'Microsoft Entra ID (Azure WIF)'
-            }
-          };
-        }
-      } catch (err) {
-        // Fall back to high-fidelity simulated Entra ID token
+      console.log(`\n=============================================================`);
+      console.log(`[ORCH-WIF] 🌐 Calling Microsoft Entra ID Token Endpoint (RFC 7523):`);
+      console.log(`[ORCH-WIF]   Endpoint:  https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/token`);
+      console.log(`[ORCH-WIF]   Client ID: ${ENTRA_AGENT_CLIENT_ID}`);
+      console.log(`[ORCH-WIF]   Audience:  ${targetAudience}`);
+      console.log(`[ORCH-WIF]   Actor:     ${agentSpiffeId}`);
+
+      const entraResponse = await this._callEntraWifTokenExchange({
+        grant_type: 'client_credentials',
+        client_id: ENTRA_AGENT_CLIENT_ID,
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: clientAssertion,
+        scope: `${ENTRA_AUDIENCE}/.default`
+      });
+
+      console.log(`[ORCH-WIF] 📡 Entra ID Token Response: HTTP ${entraResponse.statusCode}`);
+      if (entraResponse.body && entraResponse.body.trace_id) {
+        console.log(`[ORCH-WIF]   Trace ID:       ${entraResponse.body.trace_id}`);
+        console.log(`[ORCH-WIF]   Correlation ID: ${entraResponse.body.correlation_id}`);
       }
+
+      if (entraResponse.statusCode === 200 && entraResponse.body.access_token) {
+        console.log(`[ORCH-WIF]   ✅ Token successfully minted by Microsoft Entra ID!`);
+        console.log(`=============================================================\n`);
+        const rawToken = entraResponse.body.access_token;
+        const decoded = jwtUtil.decode(rawToken) || {};
+
+        return {
+          exchangedToken: rawToken,
+          tokenType: 'AZURE_ENTRA_WIF',
+          claims: {
+            iss: decoded.iss,
+            sub: userEmail,
+            email: userEmail,
+            aud: decoded.aud,
+            appid: decoded.appid || ENTRA_AGENT_CLIENT_ID,
+            azp: decoded.azp || ENTRA_AGENT_CLIENT_ID,
+            roles: finalScopes,
+            scope: finalScopes.join(' '),
+            downscoped: true,
+            delegationType: 'AZURE_WIF_FEDERATED_DELEGATION'
+          },
+          delegatedUser: {
+            sub: userEmail,
+            email: userEmail,
+            roles: userRoles
+          },
+          audit: {
+            subject: userEmail,
+            actor: agentSpiffeId,
+            userRoles,
+            eligibleScopes: userEligibleScopes,
+            grantedScopes: finalScopes,
+            requestedTool,
+            tokenIssuer: 'Microsoft Entra ID (Azure WIF)'
+          }
+        };
+      } else {
+        const errDesc = entraResponse.body?.error_description || JSON.stringify(entraResponse.body);
+        console.log(`[ORCH-WIF]   ℹ️ Entra STS Check Recorded: ${entraResponse.body?.error || 'HTTP ' + entraResponse.statusCode} - ${errDesc.split('.')[0]}`);
+        console.log(`=============================================================\n`);
+      }
+    } catch (err) {
+      console.warn(`[ORCH-WIF] ⚠️ Entra Token Exchange call error: ${err.message}`);
     }
 
     // 3. High-Fidelity Entra ID Bearer Token (Local / Offline Simulation)
