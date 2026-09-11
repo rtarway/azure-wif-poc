@@ -47,7 +47,7 @@ The fastest way to configure everything in Azure is using the provided automatio
 ```bash
 # 1. Set environment variables (optional overrides)
 export AZURE_RESOURCE_GROUP="rg-azure-wif-poc"
-export AZURE_LOCATION="eastus"
+export AZURE_LOCATION="centralus" # Match your storage buckets region (e.g. Central US)
 export AZURE_STORAGE_ACCOUNT="azwifstoragepoc$RANDOM" # Must be globally unique alphanumeric
 export SPIRE_OIDC_ISSUER="https://identity.azure.example.com/spire-oidc"
 
@@ -241,82 +241,89 @@ Azure Entra ID requires the SPIRE OIDC discovery documents (`/.well-known/openid
 
 ---
 
-### 🏢 Setting Up Microsoft Foundry (Azure AI Foundry): Hub & Project
+### 🏢 Setting Up Microsoft Foundry (Azure AI Foundry): Project-First Architecture
 
-In Microsoft Foundry (accessible at [ai.azure.com](https://ai.azure.com)), infrastructure and governance follow a hierarchical model:
-- **Foundry Hub (Organization / Team Boundary)**: Centralizes security, Entra ID authentication, compute, networking, and governance policies.
-- **Foundry Project (Workspace / Space Boundary)**: The collaborative development workspace where agents, declarative tools, datasets, and endpoints reside.
+> [!IMPORTANT]
+> ### 💡 Why is there no "Hub" button in the Microsoft Foundry Portal?
+> In the modern **Microsoft Foundry** portal ([ai.azure.com](https://ai.azure.com)), Microsoft transitioned to a **"Project-First" architecture**:
+> - **In Classic Azure AI Studio**: You had to manually create a "Hub" first as an administrative container, then create a "Project" inside it.
+> - **In Modern Microsoft Foundry**: There is **no "Hub" button** in the creation flow! You click **"+ Create project"** directly. Microsoft Foundry automatically provisions and wires the underlying AI Services resource behind the scenes inside your chosen resource group and region.
+>
+> ### 💡 Why should you choose Central US (`centralus`) instead of East US?
+> **Always select the region where your storage account and buckets reside (e.g. `Central US` / `centralus`)!**
+> 1. **Ultra-Low Latency**: The MCP server running in Central US reads and writes blobs in `app1` and `app2` over the local Azure datacenter fabric with sub-millisecond response times.
+> 2. **Zero Cross-Region Egress Bandwidth Costs**: Transferring data across regions (e.g. reading from a `centralus` storage account into an `eastus` MCP tool) incurs Azure data egress charges. Intra-region transfer within `centralus` is completely free.
+> 3. **Data Residency & Compliance**: Keeps your customer data, audit logs, and AI tool operations inside the same compliance boundary.
 
 ```text
-               Microsoft Foundry Hierarchy
+               Microsoft Foundry Hierarchy (Project-First)
  ┌─────────────────────────────────────────────────────────────┐
  │  Microsoft Foundry Portal (https://ai.azure.com)            │
  │                                                             │
- │  Hub (Organization Boundary): hub-azure-wif-foundry        │
- │     └─ Project (Space/Workspace): proj-azure-wif-mcp        │
- │           ├─ MCP Service:  azure-mcp-server (tools.yaml)    │
- │           ├─ Data Storage: Azure Blob Storage (app1 & app2) │
- │           └─ Endpoint:     https://proj-azure-wif-mcp...    │
+ │  Resource Group: rg-azure-wif-demo (Region: Central US)     │
+ │     └─ Foundry Project: proj-azure-wif-mcp                  │
+ │           ├─ Custom MCP Tool: azure-mcp-server (tools.yaml) │
+ │           ├─ Data Storage:    Azure Storage (app1 & app2)   │
+ │           │                   (Co-located in Central US)    │
+ │           └─ Endpoint:        https://proj-azure-wif-mcp... │
  └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### 1. Provisioning Microsoft Foundry Hub & Project
+### 1. Creating Your Microsoft Foundry Project
 
-You can provision your Microsoft Foundry Hub and Project using an automated script, the Azure CLI, or the Microsoft Foundry Web Portal:
+You can create your Microsoft Foundry Project using the Web Portal GUI, the Azure CLI, or the automated setup script:
 
-#### Option A: One-Click Setup Script (`./scripts/foundry-setup-project.sh`)
+#### Option A: Microsoft Foundry Web Portal GUI (`ai.azure.com`) - Recommended
+1. Open the **[Microsoft Foundry Portal](https://ai.azure.com)** in your web browser and sign in.
+2. In the top navigation bar or home screen, click **"+ Create project"** (or click the project dropdown in the top-left corner &rarr; select **"Create new project"**).
+   *(Notice: you do not need to look for a "Hub" button — modern Foundry starts directly with Project creation!)*
+3. In the project creation wizard:
+   - **Project Name**: Enter `proj-azure-wif-mcp`.
+   - **Subscription**: Select your active Azure subscription.
+   - **Resource Group**: Select your existing resource group where your storage account was created (e.g. `rg-azure-wif-demo` or `rg-azure-wif-poc`).
+   - **Location / Region**: Select **Central US** (`centralus`) to match your storage account and containers.
+4. Click **Create project** (or **Review + create** &rarr; **Create**).
+   Microsoft Foundry will automatically initialize the project and provision the underlying AI service runtime in Central US.
+
+#### Option B: One-Click Setup Script (`./scripts/foundry-setup-project.sh`)
+The helper script automatically detects your existing resource group's location (e.g. `centralus`) and provisions the project:
 ```bash
-# Optional overrides (defaults to rg-azure-wif-demo and eastus)
+# Target Central US matching your storage buckets
 export AZURE_RESOURCE_GROUP="rg-azure-wif-demo"
-export AZURE_LOCATION="eastus"
-export FOUNDRY_HUB_NAME="hub-azure-wif-foundry"
+export AZURE_LOCATION="centralus"
 export FOUNDRY_PROJECT_NAME="proj-azure-wif-mcp"
 
 # Run automated setup
 ./scripts/foundry-setup-project.sh
 ```
 
-#### Option B: Step-by-Step Terminal Commands (Azure CLI)
+#### Option C: Step-by-Step Terminal Commands (Azure CLI)
 ```bash
 # 1. Log in to Azure
 az login
 
-# 2. Ensure your target Resource Group exists
-az group create --name rg-azure-wif-demo --location eastus
+# 2. Ensure your target Resource Group exists in Central US
+az group create --name rg-azure-wif-demo --location centralus
 
-# 3. Create the Microsoft Foundry Hub (AIServices account)
+# 3. Create the underlying Microsoft Foundry AI Services resource in Central US
 az cognitiveservices account create \
   --name hub-azure-wif-foundry \
   --resource-group rg-azure-wif-demo \
-  --location eastus \
+  --location centralus \
   --kind "AIServices" \
   --sku "S0" \
   --yes
 
-# 4. View Hub Endpoint and Status
+# 4. View Endpoint and Status
 az cognitiveservices account show \
   --name hub-azure-wif-foundry \
   --resource-group rg-azure-wif-demo \
   --query "properties.endpoint" -o tsv
 ```
 
-#### Option C: Microsoft Foundry Web Portal GUI
-1. Open the [Microsoft Foundry Portal](https://ai.azure.com) in your web browser.
-2. Sign in with your Azure tenant credentials.
-3. In the top navigation bar, ensure **Foundry** (or **Hubs**) is selected.
-4. Click **+ New Hub**:
-   - **Hub Name**: `hub-azure-wif-foundry`
-   - **Subscription**: Your active Azure subscription
-   - **Resource Group**: `rg-azure-wif-demo`
-   - **Region**: `East US`
-   - Click **Create**.
-5. Once the Hub is created, navigate into it and click **+ New Project**:
-   - **Project Name**: `proj-azure-wif-mcp`
-   - Click **Create Project**.
-
-Your Microsoft Foundry environment is now ready for tool and MCP server deployment!
+Your Microsoft Foundry environment in Central US is now ready for tool and MCP server deployment!
 
 ---
 

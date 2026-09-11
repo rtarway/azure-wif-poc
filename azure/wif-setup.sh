@@ -7,7 +7,13 @@
 set -euo pipefail
 
 RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-rg-azure-wif-poc}"
-LOCATION="${AZURE_LOCATION:-eastus}"
+LOCATION="${AZURE_LOCATION:-centralus}"
+if az group show --name "${RESOURCE_GROUP}" >/dev/null 2>&1; then
+  DETECTED_LOC=$(az group show --name "${RESOURCE_GROUP}" --query location -o tsv)
+  if [ -n "$DETECTED_LOC" ] && [ -z "${AZURE_LOCATION:-}" ]; then
+    LOCATION="$DETECTED_LOC"
+  fi
+fi
 STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT:-azwifstorage$RANDOM}"
 IDENTITY_NAME="${AZURE_IDENTITY_NAME:-id-agent-orchestrator}"
 FED_CRED_NAME="${AZURE_FED_CRED_NAME:-fed-cred-spire-orchestrator}"

@@ -31,25 +31,33 @@ echo "    Active Subscription: $SUBSCRIPTION_NAME ($SUBSCRIPTION_ID)"
 
 # 2. Configuration Parameters
 RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-rg-azure-wif-demo}"
-LOCATION="${AZURE_LOCATION:-eastus}"
+LOCATION="${AZURE_LOCATION:-centralus}"
 FOUNDRY_HUB_NAME="${FOUNDRY_HUB_NAME:-hub-azure-wif-foundry}"
 FOUNDRY_PROJECT_NAME="${FOUNDRY_PROJECT_NAME:-proj-azure-wif-mcp}"
+
+# Auto-detect location if Resource Group already exists
+if az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
+  DETECTED_LOC=$(az group show --name "$RESOURCE_GROUP" --query location -o tsv)
+  if [ -n "$DETECTED_LOC" ] && [ -z "${AZURE_LOCATION:-}" ]; then
+    LOCATION="$DETECTED_LOC"
+  fi
+fi
 
 echo ""
 echo "Configuration:"
 echo "  * Resource Group:       $RESOURCE_GROUP"
-echo "  * Location:             $LOCATION"
-echo "  * Foundry Hub:          $FOUNDRY_HUB_NAME (Organization Boundary)"
-echo "  * Foundry Project:      $FOUNDRY_PROJECT_NAME (Workspace/Space)"
+echo "  * Location:             $LOCATION (matches storage account region)"
+echo "  * Foundry Project:      $FOUNDRY_PROJECT_NAME (Space/Workspace)"
+echo "  * Underlying AI Hub:    $FOUNDRY_HUB_NAME"
 echo ""
 
 # 3. Create Resource Group if it doesn't exist
-echo "--> 1. Ensuring Resource Group '$RESOURCE_GROUP' exists..."
+echo "--> 1. Ensuring Resource Group '$RESOURCE_GROUP' exists in '$LOCATION'..."
 if ! az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
   az group create --name "$RESOURCE_GROUP" --location "$LOCATION" -o table
-  echo "    Created Resource Group: $RESOURCE_GROUP"
+  echo "    Created Resource Group: $RESOURCE_GROUP ($LOCATION)"
 else
-  echo "    Resource Group '$RESOURCE_GROUP' already exists."
+  echo "    Resource Group '$RESOURCE_GROUP' already exists ($LOCATION)."
 fi
 
 # 4. Create Microsoft Foundry Hub (AIServices account)
