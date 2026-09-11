@@ -31,9 +31,9 @@ app.post('/api/login', async (req, res) => {
   const { username, password, userType } = req.body || {};
 
   let resolvedUser = 'bob';
-  if (userType === 'admin' || username === 'alice') {
+  if (userType === 'admin' || userType === 'alice' || username === 'alice') {
     resolvedUser = 'alice';
-  } else if (username === 'bob' || userType === 'regular-user') {
+  } else if (username === 'bob' || userType === 'regular-user' || userType === 'bob') {
     resolvedUser = 'bob';
   }
 

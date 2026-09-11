@@ -115,6 +115,30 @@ describe('Web Frontend Tests (Outside SPIRE)', () => {
     assert.ok(!decoded.scope.includes('mcp:tool2'));
   });
 
+  test('POST /api/login for UI userType alice switches properly to Alice', async () => {
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/login',
+      body: { userType: 'alice' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.user.username, 'alice');
+    assert.ok(res.body.user.scopes.includes('mcp:tool2'));
+  });
+
+  test('POST /api/login for UI userType bob switches properly to Bob', async () => {
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/login',
+      body: { userType: 'bob' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.user.username, 'bob');
+    assert.ok(!res.body.user.scopes.includes('mcp:tool2'));
+  });
+
   test('POST /api/chat forwards prompt and token to agent orchestrator', async () => {
     const res = await invokeApp(app, {
       method: 'POST',

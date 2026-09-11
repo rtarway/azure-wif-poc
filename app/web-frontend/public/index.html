@@ -189,11 +189,14 @@
         const res = await fetch('/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userType })
+          body: JSON.stringify({ userType, username: userType })
         });
         const data = await res.json();
         currentToken = data.token;
         currentUser = data.user;
+
+        document.getElementById('btn-alice').innerHTML = userType === 'alice' ? '✅ Alice (Admin)' : 'Alice (Admin)';
+        document.getElementById('btn-bob').innerHTML = userType === 'bob' ? '✅ Bob (Regular)' : 'Bob (Regular)';
 
         document.getElementById('user-info').style.display = 'block';
         document.getElementById('user-name').innerHTML = `${currentUser.displayName} <span class="role-badge ${currentUser.roles.includes('admin') ? 'role-admin' : 'role-regular'}">${currentUser.roles.includes('admin') ? 'Admin' : 'Regular User'}</span>`;
