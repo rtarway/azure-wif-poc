@@ -59,6 +59,16 @@ kubectl apply -f "${ROOT_DIR}/k8s/mcp-server-deployment.yaml"
 kubectl apply -f "${ROOT_DIR}/k8s/agent-orchestrator-deployment.yaml"
 kubectl apply -f "${ROOT_DIR}/k8s/web-frontend-deployment.yaml"
 
+# Auto-configure Azure MCP Endpoint if available in environment
+TARGET_MCP_URL="${AZURE_MCP_ENDPOINT:-${MCP_SERVER_URL:-}}"
+if [ -n "$TARGET_MCP_URL" ]; then
+  echo "    Configuring agent-config ConfigMap with Azure MCP Endpoint: $TARGET_MCP_URL"
+  kubectl create configmap agent-config -n agent-system \
+    --from-literal=MCP_SERVER_URL="$TARGET_MCP_URL" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl -n agent-system rollout restart deployment/agent-orchestrator >/dev/null 2>&1 || true
+fi
+
 # Step 5b: Publish SPIRE OIDC Discovery to Azure Blob Storage
 echo "--> 5b. Publishing SPIRE OIDC Discovery documents to Azure Blob Storage..."
 if [ -f "${SCRIPT_DIR}/publish-spire-oidc.sh" ]; then

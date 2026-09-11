@@ -4,6 +4,7 @@
 
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const llmSimulator = require('./llmSimulator');
 const spireClient = require('./spireClient');
 const tokenExchange = require('./tokenExchange');
@@ -13,7 +14,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL || 'http://localhost:8080';
+const MCP_SERVER_URL = process.env.AZURE_MCP_ENDPOINT || process.env.MCP_SERVER_URL || 'http://localhost:8080';
 
 // Health Check
 app.get('/healthz', (req, res) => {
@@ -44,10 +45,15 @@ async function callMcpServer(mcpUrl, toolName, args, oboBearerToken) {
     }
   });
 
-  const parsedUrl = new URL('/mcp', mcpUrl);
+  let endpoint = mcpUrl;
+  if (!endpoint.endsWith('/mcp')) {
+    endpoint = `${endpoint.replace(/\/+$/, '')}/mcp`;
+  }
+  const parsedUrl = new URL(endpoint);
+  const client = parsedUrl.protocol === 'https:' ? https : http;
 
   return new Promise((resolve, reject) => {
-    const req = http.request(
+    const req = client.request(
       parsedUrl,
       {
         method: 'POST',

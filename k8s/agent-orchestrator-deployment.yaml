@@ -1,4 +1,13 @@
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: agent-system
+data:
+  # Default points to local in-cluster MCP server; automatically updated when Azure MCP server is deployed
+  MCP_SERVER_URL: "http://mcp-service.agent-system.svc.cluster.local:8080"
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: orchestrator-sa
@@ -37,7 +46,11 @@ spec:
             - name: PORT
               value: "3001"
             - name: MCP_SERVER_URL
-              value: "http://mcp-service.agent-system.svc.cluster.local:8080"
+              valueFrom:
+                configMapKeyRef:
+                  name: agent-config
+                  key: MCP_SERVER_URL
+                  optional: true
             - name: SPIRE_AGENT_SOCKET
               value: "/run/spire/sockets/agent.sock"
             - name: AGENT_SPIFFE_ID

@@ -364,20 +364,147 @@ Once deployed, test your live endpoint directly from your terminal:
 
 ---
 
-### Step 4: Connect the Rancher Desktop Agent to the Azure MCP Server
+### Step 4: Deploy the Agent Ecosystem & SPIRE onto Rancher Desktop Kubernetes
 
-Once the MCP server is live in Azure, point your local Rancher Desktop Agent Orchestrator to it:
+Now that your Azure MCP Server is live and verified, deploy the local Agent Ecosystem (Keycloak IdP, SPIRE + Istio Workload Identity, Agent Orchestrator, and Web Frontend) into Rancher Desktop.
 
-1. Export the endpoint environment variable:
-   ```bash
-   export AZURE_MCP_ENDPOINT="https://<YOUR_APP_NAME>.azurewebsites.net/mcp"
-   ```
-2. In Kubernetes (`k8s/agent-orchestrator-deployment.yaml`), ensure `AZURE_MCP_ENDPOINT` points to your Azure URL.
-3. When users log in via the Web Frontend (`alice` or `bob`) and submit prompts:
-   - The Agent Orchestrator acquires its SPIFFE SVID.
-   - Exchanges the Keycloak token for an RFC 8693 downscoped OBO token.
-   - Invokes `https://<YOUR_APP_NAME>.azurewebsites.net/mcp` with `Authorization: Bearer <OBO_TOKEN>`.
-   - The Azure MCP Server validates `sub` and `act.sub`, enforces scopes, and reads/writes Azure Storage!
+#### ⚙️ How Kubernetes Reads the Azure Endpoint Dynamically (No File Editing)
+
+The Kubernetes deployment (`k8s/agent-orchestrator-deployment.yaml`) dynamically reads `MCP_SERVER_URL` from the **`agent-config` ConfigMap** using `configMapKeyRef`:
+
+```yaml
+env:
+  - name: MCP_SERVER_URL
+    valueFrom:
+      configMapKeyRef:
+        name: agent-config
+        key: MCP_SERVER_URL
+        optional: true
+```
+
+You **never** have to modify YAML files manually. The endpoint can be dynamically set or updated with a single command:
+
+```bash
+# Update the ConfigMap to point to your deployed Azure MCP Server
+kubectl create configmap agent-config -n agent-system \
+  --from-literal=MCP_SERVER_URL="https://<YOUR_APP_NAME>.azurewebsites.net/mcp" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# Restart the orchestrator to pick up the updated URL
+kubectl rollout restart deployment/agent-orchestrator -n agent-system
+```
+
+---
+
+#### 🚀 Deployment Option 1: 1-Click Automated Script (`./scripts/install-infra.sh`) - Recommended
+
+The automated script configures the entire local stack and connects it to your Azure resources:
+
+```bash
+# 1. Set your Azure resources
+export AZURE_STORAGE_ACCOUNT="<YOUR_STORAGE_ACCOUNT_NAME>"
+export AZURE_MCP_ENDPOINT="https://<YOUR_APP_NAME>.azurewebsites.net/mcp"
+
+# 2. Run the end-to-end infrastructure installer
+./scripts/install-infra.sh
+```
+
+**What this script does automatically:**
+1. Verifies local tools (`kubectl`, `terraform`, `helm`, `docker`) and ensures Rancher Desktop Kubernetes is active.
+2. Applies Terraform (`terraform/`) to provision:
+   - **SPIRE Server & Agent** with the SPIFFE CSI Driver.
+   - **Istio Service Mesh** with SPIRE Workload Identity integration.
+   - **Keycloak IdP** in namespace `keycloak` with pre-loaded users (`alice` [Admin] and `bob` [Regular User]).
+3. Builds local Docker container images in Rancher Desktop:
+   - `agent-orchestrator:v1.0.0`
+   - `web-frontend:v1.0.0`
+4. Deploys Kubernetes workloads (`k8s/`):
+   - Creates namespaces: `agent-system`, `keycloak`.
+   - Creates `agent-config` ConfigMap populated with your `AZURE_MCP_ENDPOINT`.
+   - Deploys `agent-orchestrator` (with SPIRE socket injection and Istio sidecar).
+   - Deploys `web-frontend` (outside SPIRE, accessible via browser).
+5. Publishes SPIRE OIDC Discovery documents and public JWKS keys to Azure Blob Storage (`./scripts/publish-spire-oidc.sh`) so Azure Entra ID can validate SPIRE SVIDs.
+6. Waits for all pods to be in `Ready` state and configures port-forwarding.
+
+---
+
+#### 📋 Deployment Option 2: Step-by-Step Manual Deployment
+
+If you prefer executing each step manually:
+
+##### 1. Create Kubernetes Namespaces
+```bash
+kubectl apply -f k8s/namespaces.yaml
+```
+
+##### 2. Provision SPIRE, Istio, and Keycloak via Terraform
+```bash
+cd terraform
+terraform init
+terraform apply -auto-approve
+cd ..
+```
+*Wait ~60 seconds for SPIRE server (`spire-server-0`) and Keycloak pods to be ready.*
+
+##### 3. Build Local Container Images
+```bash
+docker build -t agent-orchestrator:v1.0.0 app/agent-orchestrator
+docker build -t web-frontend:v1.0.0 app/web-frontend
+```
+
+##### 4. Configure Azure MCP Endpoint in ConfigMap
+```bash
+kubectl create configmap agent-config -n agent-system \
+  --from-literal=MCP_SERVER_URL="https://<YOUR_APP_NAME>.azurewebsites.net/mcp" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+##### 5. Deploy Workloads
+```bash
+kubectl apply -f k8s/agent-orchestrator-deployment.yaml
+kubectl apply -f k8s/web-frontend-deployment.yaml
+
+# Verify pods are running
+kubectl get pods -n agent-system
+```
+
+##### 6. Publish SPIRE OIDC Discovery to Azure Blob Storage
+Azure Entra ID Workload Identity Federation requires SPIRE's public keys to be reachable over HTTPS:
+```bash
+export AZURE_STORAGE_ACCOUNT="<YOUR_STORAGE_ACCOUNT_NAME>"
+./scripts/publish-spire-oidc.sh
+```
+
+##### 7. Access the Application
+- **Web Frontend UI (Outside SPIRE)**:
+  ```bash
+  kubectl port-forward -n agent-system svc/web-frontend 3000:3000
+  ```
+  Open **http://localhost:3000** in your browser.
+- **Keycloak Admin Console**:
+  ```bash
+  kubectl port-forward -n keycloak svc/keycloak-service 8080:8080
+  ```
+  Open **http://localhost:8080** (Admin: `admin` / `admin`).
+
+---
+
+### Step 5: Test the End-to-End Flow (Web UI & CLI)
+
+#### A. Interactive Testing via Web UI (`http://localhost:3000`)
+1. Navigate to `http://localhost:3000`.
+2. **Log in as Bob (Regular User)**:
+   - Prompt: *"Write monthly summary to app2"* &rarr; **Granted** (Tool1).
+   - Prompt: *"Audit container app1"* &rarr; **Denied** (Tool2 requires `mcp:tool2`, Bob only has `mcp:tool1`).
+3. **Log in as Alice (Security Admin)**:
+   - Prompt: *"Audit container app1"* &rarr; **Granted** (Alice has `mcp:tool2`).
+
+#### B. Direct CLI Demonstration against Azure MCP Server
+You can also run the automated test scenario directly against your deployed Azure MCP Server:
+```bash
+export AZURE_MCP_ENDPOINT="https://<YOUR_APP_NAME>.azurewebsites.net/mcp"
+./scripts/run-demo.sh
+```
 
 ## 🔍 Verification & Troubleshooting
 

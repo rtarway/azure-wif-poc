@@ -201,6 +201,19 @@ else
   echo "      az webapp log tail --name $APP_NAME --resource-group $RESOURCE_GROUP"
 fi
 
+# 10. Auto-sync to Rancher Desktop Kubernetes (if connected)
+echo ""
+echo "--> 8. Synchronizing endpoint with Kubernetes (agent-config ConfigMap)..."
+if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+  kubectl create configmap agent-config -n agent-system \
+    --from-literal=MCP_SERVER_URL="$MCP_ENDPOINT" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1 || true
+  kubectl rollout restart deployment/agent-orchestrator -n agent-system >/dev/null 2>&1 || true
+  echo "   ✅ Automatically synced MCP_SERVER_URL to Kubernetes ConfigMap 'agent-config' in namespace 'agent-system'!"
+else
+  echo "   ℹ️ Kubernetes cluster not reachable currently. When deploying to Rancher Desktop, the ConfigMap or AZURE_MCP_ENDPOINT env var will be used."
+fi
+
 echo ""
 echo "================================================================="
 echo " 🎉 Azure MCP Server Deployed Successfully!"
@@ -210,7 +223,11 @@ echo "  * Health Check URL:     $HEALTH_URL"
 echo "  * Azure Portal Link:    https://portal.azure.com/#@/resource/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Web/sites/$APP_NAME"
 echo ""
 echo "👉 CONFIGURE YOUR RANCHER DESKTOP AGENT ORCHESTRATOR:"
-echo "   Set this endpoint in your agent configuration or test with:"
+echo "   Option 1 (ConfigMap - No file edits required):"
+echo "   kubectl create configmap agent-config -n agent-system --from-literal=MCP_SERVER_URL=\"$MCP_ENDPOINT\" --dry-run=client -o yaml | kubectl apply -f -"
+echo "   kubectl rollout restart deployment/agent-orchestrator -n agent-system"
+echo ""
+echo "   Option 2 (Environment variable for local/CLI demo):"
 echo "   export AZURE_MCP_ENDPOINT=\"$MCP_ENDPOINT\""
 echo "   ./scripts/run-demo.sh"
 echo "================================================================="
