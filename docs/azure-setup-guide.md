@@ -327,91 +327,101 @@ Your Microsoft Foundry environment in Central US is now ready for tool and MCP s
 
 ---
 
-## ☁️ Deploying the Low-Code MCP Server to Microsoft Foundry
-
-The Azure Low-Code MCP Server exposes `tool1` (read/write on `app1` and `app2`) and `tool2` (read-only audit on `app1`) adhering to **MCP Protocol Specification July 2026 (`2026-07-15`)**.
-
-You have **3 options** to deploy to Microsoft Foundry:
-- **Option 1**: Automated Deployment via Script / CI/CD (`./scripts/foundry-deploy.sh` or GitHub Actions)
-- **Option 2**: Infrastructure-as-Code via Terraform (`azure/mcp-microsoft-foundry.tf`) *(Optional)*
-- **Option 3**: Manual Step-by-Step Deployment via Microsoft Foundry Portal (`https://ai.azure.com`)
-
----
-
-### 🚀 Foundry Option 1: Automated Deployment via Script or CI/CD (Recommended)
-
-#### A. Automated Deployment Script (`./scripts/foundry-deploy.sh`)
-```bash
-# 1. Ensure you are logged into Azure
-az login
-
-# 2. Deploy Low-Code MCP Server to Microsoft Foundry Project
-./scripts/foundry-deploy.sh
-```
-
-#### B. Automated CI/CD Pipeline (GitHub Actions)
-The repository includes an automated GitHub Actions workflow in `.github/workflows/deploy-mcp.yml`:
-1. Every commit pushed to `main` runs the full verification test suite (`./scripts/test-all.sh`).
-2. When Azure credentials (`AZURE_CREDENTIALS`, `AZURE_RESOURCE_GROUP`, `FOUNDRY_HUB_NAME`, `FOUNDRY_PROJECT_NAME`) are set in GitHub Repository Secrets, the workflow automatically deploys declarative tools and MCP services to Microsoft Foundry.
-
----
-
-### 🏗️ Foundry Option 2: Terraform Provisioning (Optional)
+## ☁️ Hosting & Connecting the MCP Server in Microsoft Foundry
 
 > [!NOTE]
-> Terraform deployment for Microsoft Foundry is **optional** if you already use Option 1 (CI/CD or `./scripts/foundry-deploy.sh`).
-
-To provision Microsoft Foundry resources and deploy the MCP server via Terraform:
-1. Enable the deployment flag in [azure/mcp-microsoft-foundry.tf](file:///Users/rtarway/mygithubprojects/azure-wif-poc/azure/mcp-microsoft-foundry.tf):
-   ```hcl
-   variable "deploy_mcp_to_foundry_via_terraform" {
-     default = true
-   }
-   ```
-2. Run Terraform:
-   ```bash
-   cd azure
-   terraform apply -auto-approve
-   ```
-3. Terraform will provision:
-   - Microsoft Foundry Hub (`azurerm_cognitive_account` with kind `AIServices`).
-   - Assign `Storage Blob Data Contributor` to the Foundry identity on `app1` and `app2`.
-   - Register the declarative MCP server tools within the Foundry Project.
+> ### 💡 Understanding Microsoft Foundry's "Connect a tool" & "Remote MCP Server endpoint"
+> When you open the Microsoft Foundry portal ([ai.azure.com](https://ai.azure.com)) and navigate to **Build &rarr; Tools**, you will see:
+> **"Connect a tool" &rarr; Model Context Protocol (MCP)** asking for a **"Remote MCP Server endpoint"**.
+> 
+> **Why?**
+> - Microsoft Foundry is an **AI Agent and Tool Consumer/Client**. It does not build or host arbitrary Node.js Express servers directly inside the Tools UI tab.
+> - Instead, Foundry connects agents to your tools via the **Model Context Protocol (MCP)** over HTTP/SSE.
+> - The MCP server (our Node.js code in `app/mcp-server` containing `tools.yaml`, `src/index.js`, and storage logic) is hosted as a web service in Azure (e.g. via lightweight **Azure App Service** or Container Apps), which provides the live HTTPS endpoint URL.
+> - You then paste that endpoint URL into Microsoft Foundry's **"Remote MCP Server endpoint"** field to connect your tools!
 
 ---
 
-### 🖥️ Foundry Option 3: Manual Step-by-Step Deployment via Portal
+### Step 1: Host the MCP Server in Azure (to get your HTTPS Endpoint)
 
-If you prefer configuring step-by-step using the **Microsoft Foundry Web Portal**:
+You have 3 easy options to host the MCP server and get an HTTPS endpoint URL:
 
-1. Open [ai.azure.com](https://ai.azure.com) and navigate to your project (`proj-azure-wif-mcp`).
-2. In the left menu under **Build & Customize**, select **Tools & Toolboxes** (or **Custom Tools**).
-3. Click **+ Add Custom Tool** &rarr; select **Model Context Protocol (MCP)**.
-4. Provide the tool configuration:
-   - **Tool Name**: `azure-mcp-server`
-   - **Protocol Version**: `2026-07-15`
-   - **Tool Definition File**: Upload [app/mcp-server/tools.yaml](file:///Users/rtarway/mygithubprojects/azure-wif-poc/app/mcp-server/tools.yaml).
-5. **Connect Storage**:
-   - Under **Data Connections**, select your Azure Storage Account (`azwifstoragepoc`).
-   - Grant read/write access to `app1` and `app2` containers.
-6. **Save & Publish**:
-   - Click **Save & Register Tools**.
-   - Microsoft Foundry registers `tool1` and `tool2` and provides an active HTTPS MCP endpoint.
+#### Option A: One-Command Azure Web App Deployment (`./scripts/foundry-deploy.sh`) - Recommended
+```bash
+# Deploys app/mcp-server directly to Azure App Service (Linux Node.js 20) in Central US
+./scripts/foundry-deploy.sh
+```
+This script provisions an Azure App Service in `Central US` (matching your storage bucket region) and outputs your live endpoint URL:
+`https://azure-mcp-server-xxxx.azurewebsites.net/mcp`
 
-#### Step 4: Verify the Deployed MCP Server
-Once deployed, verify the endpoint over HTTPS:
+#### Option B: Azure CLI (`az webapp up`)
+```bash
+cd app/mcp-server
+
+# Deploy Node.js code to Azure App Service in Central US
+az webapp up \
+  --name "azure-mcp-server-$RANDOM" \
+  --resource-group "rg-azure-wif-demo" \
+  --location "centralus" \
+  --runtime "NODE:20-lts" \
+  --sku B1
+
+# Configure environment variables
+az webapp config appsettings set \
+  --name "<YOUR_APP_NAME>" \
+  --resource-group "rg-azure-wif-demo" \
+  --settings \
+    PORT=8080 \
+    MCP_PROTOCOL_VERSION="2026-07-15" \
+    AZURE_STORAGE_ACCOUNT="azwifstoragepoc" \
+    JWT_SECRET="demo-obo-token-secret-key-2026"
+```
+
+#### Option C: Dev / Local Tunnel (No Azure Compute Cost)
+If your MCP server is already running locally (e.g. on Rancher Desktop or `npm start` on port 8080):
+```bash
+# Start a lightweight tunnel to expose local port 8080
+npx localtunnel --port 8080
+# Or using ngrok: ngrok http 8080
+```
+Use the generated HTTPS forwarding URL: `https://<tunnel-id>.loca.lt/mcp`
+
+---
+
+### Step 2: Connect the Tool in Microsoft Foundry Portal (`ai.azure.com`)
+
+Now that you have your live HTTPS MCP endpoint URL, connect it in the Microsoft Foundry portal:
+
+1. Open **[ai.azure.com](https://ai.azure.com)** and enter your project (`proj-azure-wif-mcp`).
+2. In the left sidebar navigation, click **Build** &rarr; select **Tools** (or within your agent's configuration, click **+ Add tool**).
+3. Click **Connect a tool** &rarr; choose **Model Context Protocol (MCP)**.
+4. Fill in the connection form:
+   - **Name**: `azure-storage-mcp`
+   - **Remote MCP Server endpoint**: Paste your endpoint URL (e.g. `https://azure-mcp-server-xxxx.azurewebsites.net/mcp`)
+   - **Authentication**:
+     - For production/OBO: Select **OAuth Identity Passthrough** (or **Microsoft Entra** with Project Managed Identity).
+     - For initial POC verification: Select **None** / **Anonymous** or **Key-based**.
+5. Click **Connect** (or **Create** / **Save**).
+6. Microsoft Foundry immediately contacts your endpoint, performs the protocol version `2026-07-15` handshake (`initialize`), calls `tools/list`, and loads your declarative tools:
+   - `tool1`: Read/Write access to containers `app1` and `app2`.
+   - `tool2`: Read-only audit access to container `app1`.
+
+---
+
+### Step 3: Verify the Deployed MCP Server
+Once connected, test the endpoint directly:
 - **Health check**:
   ```bash
-  curl https://proj-azure-wif-mcp.services.ai.azure.com/healthz
+  curl https://<YOUR_APP_NAME>.azurewebsites.net/healthz
   # Output: {"status":"UP","platform":"Microsoft Foundry","protocolVersion":"2026-07-15","toolsRegistered":2}
   ```
 - **Declarative Tools List (MCP Protocol Spec 2026-07-15)**:
   ```bash
-  curl -X POST https://proj-azure-wif-mcp.services.ai.azure.com/mcp \
+  curl -X POST https://<YOUR_APP_NAME>.azurewebsites.net/mcp \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
   ```
-  You will see `tool1` (read/write on `app1` and `app2`) and `tool2` (read-only audit on `app1`) automatically registered and active!
+  Output shows `tool1` and `tool2` registered and active with their input schemas!
 
 ---
 
