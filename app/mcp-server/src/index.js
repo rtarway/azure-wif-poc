@@ -76,9 +76,19 @@ app.post('/mcp', async (req, res) => {
     const { name, arguments: toolArgs } = params || {};
     const authHeader = req.headers['authorization'];
     const delegatedHeader = req.headers['x-delegated-identity'];
+
+    const clientIp = (req.socket && req.socket.remoteAddress) || (req.connection && req.connection.remoteAddress) || 'mock-client';
+    console.log(`\n=============================================================`);
+    console.log(`[MCP-RPC] Received 'tools/call' for tool: '${name}'`);
+    console.log(`[MCP-RPC] Client IP: ${clientIp}`);
+    console.log(`[MCP-RPC] Has Authorization Header: ${!!authHeader}`);
+    console.log(`[MCP-RPC] Has X-Delegated-Identity: ${!!delegatedHeader}`);
+
     const authContext = verifyOboToken(authHeader, delegatedHeader);
 
     if (!authContext.authenticated) {
+      console.warn(`[MCP-RPC] ❌ Authentication failed: ${authContext.error}`);
+      console.log(`=============================================================\n`);
       // Return MCP tool error maintaining MCP specification
       return res.json({
         jsonrpc: '2.0',
@@ -95,7 +105,11 @@ app.post('/mcp', async (req, res) => {
       });
     }
 
+    console.log(`[MCP-RPC] Authenticated Principal: ${authContext.sub} | Actor: ${authContext.act?.sub}`);
     const toolResult = await engine.executeTool(name, toolArgs, authContext);
+    console.log(`[MCP-RPC] Completed 'tools/call' -> isError: ${toolResult.isError}`);
+    console.log(`=============================================================\n`);
+
     return res.json({
       jsonrpc: '2.0',
       id,

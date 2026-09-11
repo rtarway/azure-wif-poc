@@ -58,8 +58,11 @@ class DeclarativeEngine {
     const actSub = authContext?.act?.sub || 'direct-client';
     const scopes = authContext?.scopes || [];
 
+    console.log(`\n[MCP-EVAL] >>> Executing Tool '${toolName}' for principal '${sub}' (agent '${actSub}')...`);
+
     // Check OBO Downscoped Scope Authorization
     const hasRequiredScope = scopes.includes(toolDef.required_scope);
+    console.log(`[MCP-EVAL] Step 1 (CGP): Required scope='${toolDef.required_scope}', Token scopes=[${scopes.join(', ')}] -> ${hasRequiredScope ? 'PASSED ✅' : 'DENIED ❌'}`);
     if (!hasRequiredScope) {
       const auditLog = {
         timestamp: new Date().toISOString(),
@@ -88,8 +91,10 @@ class DeclarativeEngine {
 
     // Input validation against declarative constraints
     const { container, action, filename, content } = args || {};
+    console.log(`[MCP-EVAL] Step 2 (Validation): container='${container}', action='${action}', filename='${filename}'`);
 
     if (!container || !toolDef.allowed_containers.includes(container)) {
+      console.warn(`[MCP-EVAL] ❌ Invalid container '${container}'. Allowed: [${toolDef.allowed_containers.join(', ')}]`);
       return {
         isError: true,
         content: [
@@ -102,6 +107,7 @@ class DeclarativeEngine {
     }
 
     if (!action || !toolDef.allowed_actions.includes(action)) {
+      console.warn(`[MCP-EVAL] ❌ Invalid action '${action}'. Allowed: [${toolDef.allowed_actions.join(', ')}]`);
       return {
         isError: true,
         content: [
@@ -114,6 +120,7 @@ class DeclarativeEngine {
     }
 
     if (!filename) {
+      console.warn(`[MCP-EVAL] ❌ Missing required parameter 'filename'.`);
       return {
         isError: true,
         content: [
@@ -126,9 +133,11 @@ class DeclarativeEngine {
     }
 
     // In-Process Fine-Grained Policy (FGP) evaluation defined in tools.yaml
-    if (Array.isArray(toolDef.fine_grained_policies)) {
+    if (Array.isArray(toolDef.fine_grained_policies) && toolDef.fine_grained_policies.length > 0) {
+      console.log(`[MCP-EVAL] Step 3 (FGP): Evaluating ${toolDef.fine_grained_policies.length} in-process policies from tools.yaml...`);
       for (const policy of toolDef.fine_grained_policies) {
-        if (this._evaluateFgp(policy.condition, { args, auth: authContext })) {
+        const isTriggered = this._evaluateFgp(policy.condition, { args, auth: authContext });
+        if (isTriggered) {
           if (policy.effect === 'DENY') {
             const auditLog = {
               timestamp: new Date().toISOString(),
@@ -138,7 +147,7 @@ class DeclarativeEngine {
               policyId: policy.id,
               decision: 'DENIED_BY_FGP'
             };
-            console.warn(`[MCP FGP] ACCESS DENIED: ${JSON.stringify(auditLog)}`);
+            console.warn(`[MCP FGP] ❌ Policy '${policy.id}' TRIGGERED -> ACCESS DENIED: ${JSON.stringify(auditLog)}`);
             return {
               isError: true,
               content: [
@@ -150,11 +159,14 @@ class DeclarativeEngine {
               audit: auditLog
             };
           }
+        } else {
+          console.log(`[MCP-EVAL]   Policy '${policy.id}': PASSED ✅`);
         }
       }
     }
 
     try {
+      console.log(`[MCP-STORAGE] Step 4 (Storage): Executing Pattern C User-Delegation SAS for container='${container}', file='${filename}'...`);
       let operationResult;
       if (action === 'read') {
         operationResult = await azureStorage.readBlob(container, filename);

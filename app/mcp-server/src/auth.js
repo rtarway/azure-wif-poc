@@ -52,11 +52,13 @@ function verifyOboToken(authHeader, delegatedHeader) {
     const tokenAud = Array.isArray(decoded.aud) ? decoded.aud : [decoded.aud];
     const hasValidAud = tokenAud.some(a => EXPECTED_AUDIENCES.includes(a));
     if (!hasValidAud && decoded.aud) {
+      console.warn(`[MCP-AUTH] ❌ Audience check failed. Received: ${JSON.stringify(decoded.aud)}, Expected one of: [${EXPECTED_AUDIENCES.join(', ')}]`);
       return {
         authenticated: false,
         error: `Token audience verification failed: '${JSON.stringify(decoded.aud)}' does not match expected audiences [${EXPECTED_AUDIENCES.join(', ')}].`
       };
     }
+    console.log(`[MCP-AUTH] ✅ Audience verified: ${JSON.stringify(decoded.aud)}`);
 
     // 2. Sender Verification (azp, appid, or act.sub)
     const tokenAzp = decoded.appid || decoded.azp;
@@ -67,11 +69,13 @@ function verifyOboToken(authHeader, delegatedHeader) {
       !tokenAzp; // Allow if azp omitted in local unit tests
 
     if (!isValidSender) {
+      console.warn(`[MCP-AUTH] ❌ Sender verification failed: unauthorized client '${tokenAzp || actorSub}'`);
       return {
         authenticated: false,
         error: `Sender verification failed: unauthorized client '${tokenAzp || actorSub}'.`
       };
     }
+    console.log(`[MCP-AUTH] ✅ Sender client verified: ${tokenAzp || actorSub || 'authorized-agent'}`);
 
     // 3. Scopes & App Roles resolution (Entra ID emits App Roles in decoded.roles)
     let scopes = [];
@@ -97,6 +101,7 @@ function verifyOboToken(authHeader, delegatedHeader) {
         scopes = ['mcp:tool1'];
       }
     }
+    console.log(`[MCP-AUTH] ✅ App roles & scopes resolved: [${scopes.join(', ')}]`);
 
     // 4. Resolve Delegated Human User Principal (Keycloak User)
     let delegatedUser = {
@@ -125,6 +130,7 @@ function verifyOboToken(authHeader, delegatedHeader) {
         // Fall back to token claims
       }
     }
+    console.log(`[MCP-AUTH] ✅ Delegated user principal: sub='${delegatedUser.sub}', email='${delegatedUser.email}', roles=[${delegatedUser.roles.join(', ')}]`);
 
     const agentSpiffeId = actorSub || (tokenAzp ? `entra://${tokenAzp}` : 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa');
 
