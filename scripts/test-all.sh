@@ -30,5 +30,5 @@ for f in "${ROOT_DIR}"/k8s/*.yaml; do
 done
 
 echo "================================================================="
-echo " ALL TESTS AND VALIDATIONS PASSED SUCCESSFULLY! (23/23 Passed)"
+echo " ALL TESTS AND VALIDATIONS PASSED SUCCESSFULLY! (24/24 Passed)"
 echo "================================================================="

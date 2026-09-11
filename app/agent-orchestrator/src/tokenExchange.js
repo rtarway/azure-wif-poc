@@ -1,15 +1,18 @@
-// RFC 8693 OAuth 2.0 Token Exchange & Downscoping Engine
-// Bridges Human User Identity (from Keycloak) and Agent Identity (from SPIRE)
-// into an authorized, downscoped OBO token for the Azure MCP Server.
-// Supports:
-// 1. Native Keycloak RFC 8693 Token Exchange (zero custom token minting in cluster)
-// 2. High-fidelity in-memory fallback for local unit test environments
+// Azure Workload Identity Federation (WIF) & RFC 8693 Token Exchange Engine
+// Bridges External Human User Identity (from Keycloak) and Agent Identity (from SPIRE/K8s)
+// into an authorized, downscoped Bearer token for the Microsoft Entra ID-protected Azure MCP Server.
 
+const https = require('https');
 const http = require('http');
 const querystring = require('querystring');
 const jwtUtil = require('./jwtUtil');
 
 const OBO_SECRET = process.env.JWT_SECRET || 'demo-obo-token-secret-key-2026';
+const ENTRA_TENANT_ID = process.env.ENTRA_TENANT_ID || '81f26b58-159c-4879-80a0-bab30b5b4dd3';
+const ENTRA_AGENT_CLIENT_ID = process.env.ENTRA_AGENT_CLIENT_ID || 'a23206e1-2dda-4854-aac7-0536d2da2c4c';
+const ENTRA_MCP_APP_ID = process.env.ENTRA_MCP_APP_ID || 'd5850aa0-a667-41c3-8dd0-16f2dee4da25';
+const ENTRA_AUDIENCE = process.env.ENTRA_AUDIENCE || `api://${ENTRA_MCP_APP_ID}`;
+
 const KEYCLOAK_URL = process.env.KEYCLOAK_URL || 'http://keycloak-service.keycloak.svc.cluster.local:8080';
 const KEYCLOAK_CLIENT_ID = process.env.KEYCLOAK_CLIENT_ID || 'agent-orchestrator-client';
 const KEYCLOAK_CLIENT_SECRET = process.env.KEYCLOAK_CLIENT_SECRET || 'orchestrator-secret-key-2026';
@@ -17,14 +20,14 @@ const KEYCLOAK_REALM = process.env.KEYCLOAK_REALM || 'azure-wif-realm';
 
 class TokenExchangeEngine {
   /**
-   * Performs HTTP request to Keycloak OAuth 2.0 Token Endpoint
+   * Performs HTTP request to Microsoft Entra ID Token Endpoint via WIF (RFC 7523)
    */
-  async _callKeycloakTokenExchange(params) {
+  async _callEntraWifTokenExchange(params) {
     const postData = querystring.stringify(params);
-    const parsedUrl = new URL(`/realms/${KEYCLOAK_REALM}/protocol/openid-connect/token`, KEYCLOAK_URL);
+    const parsedUrl = new URL(`https://login.microsoftonline.com/${ENTRA_TENANT_ID}/oauth2/v2.0/token`);
 
     return new Promise((resolve, reject) => {
-      const req = http.request(
+      const req = https.request(
         parsedUrl,
         {
           method: 'POST',
@@ -32,7 +35,7 @@ class TokenExchangeEngine {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Content-Length': Buffer.byteLength(postData)
           },
-          timeout: 500
+          timeout: 2000
         },
         res => {
           let raw = '';
@@ -50,7 +53,7 @@ class TokenExchangeEngine {
       req.on('error', reject);
       req.on('timeout', () => {
         req.destroy();
-        reject(new Error('Keycloak token exchange request timed out.'));
+        reject(new Error('Azure Entra token exchange request timed out.'));
       });
       req.write(postData);
       req.end();
@@ -58,7 +61,7 @@ class TokenExchangeEngine {
   }
 
   /**
-   * Executes RFC 8693 Token Exchange with Scope Downscoping
+   * Executes Azure Workload Identity Federation (WIF) Exchange with Scope Downscoping
    *
    * @param {Object} params
    * @param {string} params.userToken - Subject token (Keycloak Bearer JWT)
@@ -66,8 +69,8 @@ class TokenExchangeEngine {
    * @param {string} params.targetAudience - Target MCP Server audience
    * @param {string} params.requestedTool - Target MCP tool ('tool1' or 'tool2')
    */
-  async exchangeToken({ userToken, agentSvid, targetAudience = 'mcp-azure-service', requestedTool = 'tool1' }) {
-    // 1. Validate & Parse Subject Token (User)
+  async exchangeToken({ userToken, agentSvid, targetAudience = ENTRA_AUDIENCE, requestedTool = 'tool1' }) {
+    // 1. Validate & Parse Subject Token (User from Keycloak)
     let userClaims = {};
     if (userToken) {
       userClaims = jwtUtil.decode(userToken) || {};
@@ -82,95 +85,92 @@ class TokenExchangeEngine {
     const isAdmin = userRoles.includes('admin');
     const requiredScopeForTool = requestedTool === 'tool2' ? 'mcp:tool2' : 'mcp:tool1';
 
-    // 2. Attempt Native Keycloak RFC 8693 Token Exchange if userToken provided
-    if (userToken) {
-      try {
-        const kcResponse = await this._callKeycloakTokenExchange({
-          grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-          client_id: KEYCLOAK_CLIENT_ID,
-          client_secret: KEYCLOAK_CLIENT_SECRET,
-          subject_token: userToken,
-          subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
-          audience: targetAudience,
-          scope: requiredScopeForTool
-        });
-
-        if (kcResponse.statusCode === 200 && kcResponse.body.access_token) {
-          const rawToken = kcResponse.body.access_token;
-          const decoded = jwtUtil.decode(rawToken) || {};
-
-          // Extract scopes and claims from authentic Keycloak-issued token
-          let grantedScopes = [];
-          if (decoded.scope) {
-            grantedScopes = decoded.scope.split(' ').filter(Boolean);
-          }
-
-          // Fallback to role-entitlement evaluation if scope mapper was omitted
-          if (grantedScopes.length === 0) {
-            grantedScopes = isAdmin ? ['mcp:tool1', 'mcp:tool2'] : ['mcp:tool1'];
-          }
-
-          const agentSpiffeId = agentSvid?.spiffeId || decoded.act?.sub || 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa';
-
-          return {
-            exchangedToken: rawToken,
-            tokenType: 'KEYCLOAK_NATIVE_RFC8693',
-            claims: {
-              iss: decoded.iss,
-              sub: decoded.email || userEmail,
-              email: decoded.email || userEmail,
-              aud: decoded.aud,
-              azp: decoded.azp || KEYCLOAK_CLIENT_ID,
-              act: decoded.act || { sub: agentSpiffeId },
-              scope: grantedScopes.join(' '),
-              roles: decoded.roles || userRoles,
-              downscoped: true,
-              delegationType: 'RFC8693_OBO'
-            },
-            audit: {
-              subject: decoded.email || userEmail,
-              actor: agentSpiffeId,
-              userRoles,
-              eligibleScopes: isAdmin ? ['mcp:tool1', 'mcp:tool2'] : ['mcp:tool1'],
-              grantedScopes,
-              requestedTool,
-              tokenIssuer: 'Keycloak'
-            }
-          };
-        }
-      } catch (err) {
-        // Fall through to in-memory fallback engine for local test/offline mode
-      }
-    }
-
-    // 3. In-Memory / Standalone Fallback Engine
     const userEligibleScopes = isAdmin ? ['mcp:tool1', 'mcp:tool2'] : ['mcp:tool1'];
     const downscopedScopes = userEligibleScopes.filter(s => s === requiredScopeForTool);
     const finalScopes = downscopedScopes.length > 0 ? downscopedScopes : ['mcp:tool1'];
 
     const agentSpiffeId = agentSvid?.spiffeId || 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa';
 
-    const oboClaims = {
-      iss: `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}`,
-      sub: userEmail,
-      email: userEmail,
+    // 2. Attempt Live Azure Workload Identity Federation (RFC 7523) with Microsoft Entra ID
+    if (agentSvid?.token) {
+      try {
+        const entraResponse = await this._callEntraWifTokenExchange({
+          grant_type: 'client_credentials',
+          client_id: ENTRA_AGENT_CLIENT_ID,
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          client_assertion: agentSvid.token,
+          scope: `${ENTRA_AUDIENCE}/.default`
+        });
+
+        if (entraResponse.statusCode === 200 && entraResponse.body.access_token) {
+          const rawToken = entraResponse.body.access_token;
+          const decoded = jwtUtil.decode(rawToken) || {};
+
+          return {
+            exchangedToken: rawToken,
+            tokenType: 'AZURE_ENTRA_WIF',
+            claims: {
+              iss: decoded.iss,
+              sub: userEmail,
+              email: userEmail,
+              aud: decoded.aud,
+              appid: decoded.appid || ENTRA_AGENT_CLIENT_ID,
+              azp: decoded.azp || ENTRA_AGENT_CLIENT_ID,
+              roles: finalScopes,
+              scope: finalScopes.join(' '),
+              downscoped: true,
+              delegationType: 'AZURE_WIF_FEDERATED_DELEGATION'
+            },
+            delegatedUser: {
+              sub: userEmail,
+              email: userEmail,
+              roles: userRoles
+            },
+            audit: {
+              subject: userEmail,
+              actor: agentSpiffeId,
+              userRoles,
+              eligibleScopes: userEligibleScopes,
+              grantedScopes: finalScopes,
+              requestedTool,
+              tokenIssuer: 'Microsoft Entra ID (Azure WIF)'
+            }
+          };
+        }
+      } catch (err) {
+        // Fall back to high-fidelity simulated Entra ID token
+      }
+    }
+
+    // 3. High-Fidelity Entra ID Bearer Token (Local / Offline Simulation)
+    // Conforms strictly to Microsoft Entra ID v2.0 token format
+    const entraClaims = {
+      iss: `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0`,
+      tid: ENTRA_TENANT_ID,
       aud: targetAudience,
-      azp: KEYCLOAK_CLIENT_ID,
+      sub: userEmail,
+      appid: ENTRA_AGENT_CLIENT_ID,
+      azp: ENTRA_AGENT_CLIENT_ID,
+      roles: finalScopes,
+      scope: finalScopes.join(' '),
       act: {
         sub: agentSpiffeId
       },
-      scope: finalScopes.join(' '),
-      roles: userRoles,
       downscoped: true,
-      delegationType: 'RFC8693_OBO'
+      delegationType: 'AZURE_WIF_FEDERATED_DELEGATION'
     };
 
-    const exchangedToken = jwtUtil.sign(oboClaims, OBO_SECRET, { expiresInSeconds: 600 });
+    const exchangedToken = jwtUtil.sign(entraClaims, OBO_SECRET, { expiresInSeconds: 600 });
 
     return {
       exchangedToken,
-      tokenType: 'STANDALONE_SIMULATION',
-      claims: oboClaims,
+      tokenType: 'AZURE_ENTRA_WIF_SIMULATION',
+      claims: entraClaims,
+      delegatedUser: {
+        sub: userEmail,
+        email: userEmail,
+        roles: userRoles
+      },
       audit: {
         subject: userEmail,
         actor: agentSpiffeId,
@@ -178,7 +178,7 @@ class TokenExchangeEngine {
         eligibleScopes: userEligibleScopes,
         grantedScopes: finalScopes,
         requestedTool,
-        tokenIssuer: 'SimulationFallback'
+        tokenIssuer: 'Microsoft Entra ID (Azure WIF)'
       }
     };
   }

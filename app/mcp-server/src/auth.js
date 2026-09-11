@@ -1,23 +1,28 @@
 const jwtUtil = require('./jwtUtil');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'demo-obo-token-secret-key-2026';
-const EXPECTED_AUDIENCES = ['mcp-azure-service', 'azure-mcp-server'];
+const ENTRA_TENANT_ID = process.env.ENTRA_TENANT_ID || '81f26b58-159c-4879-80a0-bab30b5b4dd3';
+const ENTRA_MCP_APP_ID = process.env.ENTRA_CLIENT_ID || 'd5850aa0-a667-41c3-8dd0-16f2dee4da25';
+const EXPECTED_AUDIENCES = [
+  `api://${ENTRA_MCP_APP_ID}`,
+  ENTRA_MCP_APP_ID,
+  'mcp-azure-service',
+  'azure-mcp-server'
+];
 const AUTHORIZED_SENDERS = [
+  'a23206e1-2dda-4854-aac7-0536d2da2c4c', // k8s-agent-orchestrator Entra App ID
   'agent-orchestrator-client',
   'spiffe://example.org/ns/agent-system/sa/orchestrator-sa'
 ];
 
 /**
  * Extracts and verifies the OBO token from authorization header.
- * Validates:
- *   - Signature & expiration
- *   - Audience (aud)
- *   - Sender (azp / act.sub)
- *   - sub: Original human user principal
- *   - act: Nested actor claim chain (agent workload SPIFFE ID)
- *   - scope: Downscoped scopes allowed for this execution
+ * Supports:
+ *   - Microsoft Entra ID Access Tokens (aud: api://<mcp-app-id>, roles: [mcp:tool1, ...])
+ *   - Keycloak & Local OBO tokens for test environments
+ *   - Delegated human user identity via X-Delegated-Identity header or token claim
  */
-function verifyOboToken(authHeader) {
+function verifyOboToken(authHeader, delegatedHeader) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return {
       authenticated: false,
@@ -32,14 +37,14 @@ function verifyOboToken(authHeader) {
     try {
       decoded = jwtUtil.verify(token, JWT_SECRET);
     } catch {
-      // Decode for inspecting claims if signed asymmetrically by Keycloak RS256
+      // Decode for inspecting claims if signed asymmetrically by Microsoft Entra ID or Keycloak RS256
       decoded = jwtUtil.decode(token);
     }
 
-    if (!decoded || !decoded.sub) {
+    if (!decoded) {
       return {
         authenticated: false,
-        error: 'Invalid token payload: missing sub claim.'
+        error: 'Invalid token payload: unable to decode JWT.'
       };
     }
 
@@ -53,8 +58,8 @@ function verifyOboToken(authHeader) {
       };
     }
 
-    // 2. Sender Verification (azp or act.sub)
-    const tokenAzp = decoded.azp;
+    // 2. Sender Verification (azp, appid, or act.sub)
+    const tokenAzp = decoded.appid || decoded.azp;
     const actorSub = decoded.act?.sub;
     const isValidSender =
       (tokenAzp && AUTHORIZED_SENDERS.includes(tokenAzp)) ||
@@ -68,38 +73,70 @@ function verifyOboToken(authHeader) {
       };
     }
 
-    // 3. Scopes resolution
+    // 3. Scopes & App Roles resolution (Entra ID emits App Roles in decoded.roles)
     let scopes = [];
     if (typeof decoded.scope === 'string') {
       scopes = decoded.scope.split(' ').filter(Boolean);
-    } else if (Array.isArray(decoded.scope)) {
-      scopes = decoded.scope;
+    } else if (typeof decoded.scp === 'string') {
+      scopes = decoded.scp.split(' ').filter(Boolean);
+    } else if (Array.isArray(decoded.roles)) {
+      scopes = decoded.roles.filter(r => r.startsWith('mcp:'));
     } else if (Array.isArray(decoded.scopes)) {
       scopes = decoded.scopes;
     }
 
-    // If scopes is empty in Keycloak token, resolve from user roles (CGP)
+    // If scopes not directly mapped, check role entitlements
     const roles = Array.isArray(decoded.roles)
       ? decoded.roles
       : (decoded.realm_access?.roles || []);
 
     if (scopes.length === 0) {
-      if (roles.includes('admin')) {
+      if (roles.includes('admin') || roles.includes('Tool2.Audit')) {
         scopes = ['mcp:tool1', 'mcp:tool2'];
       } else {
         scopes = ['mcp:tool1'];
       }
     }
 
+    // 4. Resolve Delegated Human User Principal (Keycloak User)
+    let delegatedUser = {
+      sub: decoded.sub || 'anonymous-user',
+      email: decoded.email || decoded.preferred_username || decoded.sub || 'anonymous-user',
+      roles: roles
+    };
+
+    if (delegatedHeader) {
+      try {
+        if (typeof delegatedHeader === 'string' && delegatedHeader.startsWith('{')) {
+          const parsed = JSON.parse(delegatedHeader);
+          delegatedUser.sub = parsed.sub || delegatedUser.sub;
+          delegatedUser.email = parsed.email || parsed.sub || delegatedUser.email;
+          if (Array.isArray(parsed.roles)) delegatedUser.roles = parsed.roles;
+        } else if (typeof delegatedHeader === 'string' && delegatedHeader.includes('.')) {
+          // Decoded JWT
+          const parsedJwt = jwtUtil.decode(delegatedHeader);
+          if (parsedJwt) {
+            delegatedUser.sub = parsedJwt.sub || delegatedUser.sub;
+            delegatedUser.email = parsedJwt.email || parsedJwt.preferred_username || parsedJwt.sub || delegatedUser.email;
+            if (Array.isArray(parsedJwt.roles)) delegatedUser.roles = parsedJwt.roles;
+          }
+        }
+      } catch {
+        // Fall back to token claims
+      }
+    }
+
+    const agentSpiffeId = actorSub || (tokenAzp ? `entra://${tokenAzp}` : 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa');
+
     return {
       authenticated: true,
-      sub: decoded.sub,
-      email: decoded.email || decoded.preferred_username || decoded.sub,
+      sub: delegatedUser.sub,
+      email: delegatedUser.email,
       aud: decoded.aud,
-      azp: tokenAzp || 'agent-orchestrator-client',
-      act: decoded.act || { sub: 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa' },
+      azp: tokenAzp || 'a23206e1-2dda-4854-aac7-0536d2da2c4c',
+      act: decoded.act || { sub: agentSpiffeId },
       scopes: scopes,
-      roles: roles,
+      roles: delegatedUser.roles,
       tokenPayload: decoded
     };
   } catch (err) {

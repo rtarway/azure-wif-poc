@@ -30,10 +30,10 @@ app.get('/healthz', (req, res) => {
 /**
  * Dispatches an MCP JSON-RPC call to the Azure MCP Server
  */
-async function callMcpServer(mcpUrl, toolName, args, oboBearerToken) {
+async function callMcpServer(mcpUrl, toolName, args, oboBearerToken, delegatedUser) {
   // If an in-memory MCP handler is injected (for unit testing), use it
   if (app.locals.mcpDispatcher) {
-    return app.locals.mcpDispatcher(toolName, args, oboBearerToken);
+    return app.locals.mcpDispatcher(toolName, args, oboBearerToken, delegatedUser);
   }
 
   const payload = JSON.stringify({
@@ -53,16 +53,22 @@ async function callMcpServer(mcpUrl, toolName, args, oboBearerToken) {
   const parsedUrl = new URL(endpoint);
   const client = parsedUrl.protocol === 'https:' ? https : http;
 
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(payload),
+    Authorization: `Bearer ${oboBearerToken}`
+  };
+
+  if (delegatedUser) {
+    headers['X-Delegated-Identity'] = JSON.stringify(delegatedUser);
+  }
+
   return new Promise((resolve, reject) => {
     const req = client.request(
       parsedUrl,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload),
-          Authorization: `Bearer ${oboBearerToken}`
-        }
+        headers
       },
       res => {
         let raw = '';
@@ -146,20 +152,22 @@ app.post('/api/agent/chat', async (req, res) => {
     });
   }
 
-  // 5. RFC 8693 On-Behalf-Of (OBO) Token Exchange with Scope Downscoping
+  // 5. Azure Workload Identity Federation (WIF) Token Exchange with Scope Downscoping
+  const entraAudience = process.env.ENTRA_AUDIENCE || 'api://d5850aa0-a667-41c3-8dd0-16f2dee4da25';
   const exchangeResult = await tokenExchange.exchangeToken({
     userToken,
     agentSvid,
-    targetAudience: 'mcp-azure-service',
+    targetAudience: entraAudience,
     requestedTool: plan.plannedTool
   });
 
-  // 6. Invoke Azure MCP Server with the Downscoped OBO Token
+  // 6. Invoke Azure MCP Server with the Downscoped Entra WIF Token & Delegated User Context
   const mcpResponse = await callMcpServer(
     MCP_SERVER_URL,
     plan.plannedTool,
     plan.arguments,
-    exchangeResult.exchangedToken
+    exchangeResult.exchangedToken,
+    exchangeResult.delegatedUser
   );
 
   // 7. Assemble Comprehensive Audit & Execution Result
@@ -172,10 +180,10 @@ app.post('/api/agent/chat', async (req, res) => {
     },
     opaPolicy: opaResult,
     oboExchange: {
-      subject: exchangeResult.claims.sub,
-      actor: exchangeResult.claims.act.sub,
-      delegationType: 'RFC8693_OBO',
-      downscopedScopes: exchangeResult.claims.scope,
+      subject: exchangeResult.delegatedUser?.sub || exchangeResult.claims.sub,
+      actor: exchangeResult.audit.actor,
+      delegationType: 'AZURE_WIF_FEDERATED_DELEGATION',
+      downscopedScopes: exchangeResult.claims.roles || exchangeResult.claims.scope,
       tokenType: exchangeResult.tokenType,
       tokenPreview: exchangeResult.exchangedToken.slice(0, 30) + '...'
     },

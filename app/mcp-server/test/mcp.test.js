@@ -70,8 +70,8 @@ function invokeApp(appInstance, { method = 'POST', url = '/mcp', headers = {}, b
   });
 }
 
-async function rpcRequest(method, params, token) {
-  const headers = {};
+async function rpcRequest(method, params, token, extraHeaders = {}) {
+  const headers = { ...extraHeaders };
   if (token) {
     headers['authorization'] = `Bearer ${token}`;
   }
@@ -314,5 +314,37 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
     assert.strictEqual(parsedData.data.patternC.permissions, 'r');
     assert.strictEqual(parsedData.data.patternC.ttlSeconds, 60);
     assert.ok(parsedData.data.patternC.sasToken.includes('sig='));
+  });
+
+  test('Azure WIF & Entra ID Protection: Validates Microsoft Entra token with app roles and delegated Keycloak user identity', async () => {
+    const entraToken = jwtUtil.sign({
+      iss: 'https://login.microsoftonline.com/81f26b58-159c-4879-80a0-bab30b5b4dd3/v2.0',
+      tid: '81f26b58-159c-4879-80a0-bab30b5b4dd3',
+      aud: 'api://d5850aa0-a667-41c3-8dd0-16f2dee4da25',
+      sub: 'a23206e1-2dda-4854-aac7-0536d2da2c4c',
+      appid: 'a23206e1-2dda-4854-aac7-0536d2da2c4c',
+      roles: ['mcp:tool1']
+    }, TEST_SECRET, { expiresInSeconds: 600 });
+
+    const delegatedUserHeader = JSON.stringify({
+      sub: 'bob@example.com',
+      email: 'bob@example.com',
+      roles: ['regular-user']
+    });
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'tool1',
+        arguments: { container: 'app1', action: 'read', filename: 'financial-report.json' }
+      },
+      entraToken,
+      { 'x-delegated-identity': delegatedUserHeader }
+    );
+
+    assert.strictEqual(res.result.isError, false);
+    assert.strictEqual(res.result.audit.principal, 'bob@example.com');
+    assert.strictEqual(res.result.audit.actingAgent, 'entra://a23206e1-2dda-4854-aac7-0536d2da2c4c');
+    assert.strictEqual(res.result.audit.decision, 'ALLOWED');
   });
 });

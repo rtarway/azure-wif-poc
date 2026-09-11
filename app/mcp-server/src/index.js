@@ -75,7 +75,8 @@ app.post('/mcp', async (req, res) => {
   if (method === 'tools/call') {
     const { name, arguments: toolArgs } = params || {};
     const authHeader = req.headers['authorization'];
-    const authContext = verifyOboToken(authHeader);
+    const delegatedHeader = req.headers['x-delegated-identity'];
+    const authContext = verifyOboToken(authHeader, delegatedHeader);
 
     if (!authContext.authenticated) {
       // Return MCP tool error maintaining MCP specification
