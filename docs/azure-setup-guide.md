@@ -22,10 +22,9 @@ This document provides a comprehensive, step-by-step guide for provisioning the 
  │  3. Azure Storage Account (azwifstoragepoc)                 │
  │     ├─ Container: app1 (Storage Blob Data Contributor)      │
  │     └─ Container: app2 (Storage Blob Data Contributor)      │
- │                                                             │
- │  4. Low-Code Microsoft Foundry MCP Server (Azure AI Foundry)│
- │     ├─ Hub (Organization Boundary): hub-azure-wif-foundry   │
- │     └─ Project (Space/Workspace):   proj-azure-wif-mcp      │
+ │  4. Low-Code Azure MCP Server (Protocol Spec July 2026)     │
+ │     ├─ Runtime: Node.js 20 on Azure (Linux Web App / PaaS)  │
+ │     └─ Tools:   tool1 (app1/app2 read/write), tool2 (audit) │
  └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -241,194 +240,139 @@ Azure Entra ID requires the SPIRE OIDC discovery documents (`/.well-known/openid
 
 ---
 
-### 🏢 Setting Up Microsoft Foundry (Azure AI Foundry): Project-First Architecture
+### ☁️ Deploying the Low-Code MCP Server to Azure
 
 > [!IMPORTANT]
-> ### 💡 Why is there no "Hub" button in the Microsoft Foundry Portal?
-> In the modern **Microsoft Foundry** portal ([ai.azure.com](https://ai.azure.com)), Microsoft transitioned to a **"Project-First" architecture**:
-> - **In Classic Azure AI Studio**: You had to manually create a "Hub" first as an administrative container, then create a "Project" inside it.
-> - **In Modern Microsoft Foundry**: There is **no "Hub" button** in the creation flow! You click **"+ Create project"** directly. Microsoft Foundry automatically provisions and wires the underlying AI Services resource behind the scenes inside your chosen resource group and region.
->
-> ### 💡 Why should you choose Central US (`centralus`) instead of East US?
-> **Always select the region where your storage account and buckets reside (e.g. `Central US` / `centralus`)!**
-> 1. **Ultra-Low Latency**: The MCP server running in Central US reads and writes blobs in `app1` and `app2` over the local Azure datacenter fabric with sub-millisecond response times.
-> 2. **Zero Cross-Region Egress Bandwidth Costs**: Transferring data across regions (e.g. reading from a `centralus` storage account into an `eastus` MCP tool) incurs Azure data egress charges. Intra-region transfer within `centralus` is completely free.
-> 3. **Data Residency & Compliance**: Keeps your customer data, audit logs, and AI tool operations inside the same compliance boundary.
-
-```text
-               Microsoft Foundry Hierarchy (Project-First)
- ┌─────────────────────────────────────────────────────────────┐
- │  Microsoft Foundry Portal (https://ai.azure.com)            │
- │                                                             │
- │  Resource Group: rg-azure-wif-demo (Region: Central US)     │
- │     └─ Foundry Project: proj-azure-wif-mcp                  │
- │           ├─ Custom MCP Tool: azure-mcp-server (tools.yaml) │
- │           ├─ Data Storage:    Azure Storage (app1 & app2)   │
- │           │                   (Co-located in Central US)    │
- │           └─ Endpoint:        https://proj-azure-wif-mcp... │
- └─────────────────────────────────────────────────────────────┘
-```
+> ### 💡 Clarification on Microsoft Foundry Portal vs. External Agent POC
+> For the purpose of this POC:
+> - **The Goal**: Prove that an **external agent ecosystem** deployed on **Rancher Desktop Kubernetes** can authenticate to an Azure-deployed MCP Server using an **RFC 8693 downscoped On-Behalf-Of (OBO) token** (`sub` = human user, `act.sub` = agent SPIFFE ID).
+> - **Direct HTTPS Connection**: The Rancher Desktop agent communicates directly with the MCP server over HTTPS (`/mcp` endpoint).
+> - **No Foundry Portal Configuration Needed**: Configuring tools inside the Microsoft Foundry portal (`ai.azure.com`) is only for agents built *inside* Microsoft Foundry. For external agents calling an Azure MCP server, **the Microsoft Foundry portal step is completely unnecessary**.
 
 ---
 
-### 1. Creating Your Microsoft Foundry Project
+### Step 1: Set Up Azure CLI Authentication & Subscription
 
-You can create your Microsoft Foundry Project using the Web Portal GUI, the Azure CLI, or the automated setup script:
+Before running deployment scripts or CLI commands, ensure your Azure CLI is logged in and pointed to your desired subscription:
 
-#### Option A: Microsoft Foundry Web Portal GUI (`ai.azure.com`) - Recommended
-1. Open the **[Microsoft Foundry Portal](https://ai.azure.com)** in your web browser and sign in.
-2. In the top navigation bar or home screen, click **"+ Create project"** (or click the project dropdown in the top-left corner &rarr; select **"Create new project"**).
-   *(Notice: you do not need to look for a "Hub" button — modern Foundry starts directly with Project creation!)*
-3. In the project creation wizard:
-   - **Project Name**: Enter `proj-azure-wif-mcp`.
-   - **Subscription**: Select your active Azure subscription.
-   - **Resource Group**: Select your existing resource group where your storage account was created (e.g. `rg-azure-wif-demo` or `rg-azure-wif-poc`).
-   - **Location / Region**: Select **Central US** (`centralus`) to match your storage account and containers.
-4. Click **Create project** (or **Review + create** &rarr; **Create**).
-   Microsoft Foundry will automatically initialize the project and provision the underlying AI service runtime in Central US.
-
-#### Option B: One-Click Setup Script (`./scripts/foundry-setup-project.sh`)
-The helper script automatically detects your existing resource group's location (e.g. `centralus`) and provisions the project:
 ```bash
-# Target Central US matching your storage buckets
-export AZURE_RESOURCE_GROUP="rg-azure-wif-demo"
-export AZURE_LOCATION="centralus"
-export FOUNDRY_PROJECT_NAME="proj-azure-wif-mcp"
-
-# Run automated setup
-./scripts/foundry-setup-project.sh
-```
-
-#### Option C: Step-by-Step Terminal Commands (Azure CLI)
-```bash
-# 1. Log in to Azure
+# 1. Log in to Azure (opens browser window)
 az login
 
-# 2. Ensure your target Resource Group exists in Central US
-az group create --name rg-azure-wif-demo --location centralus
+# 2. List your available subscriptions
+az account list --output table
 
-# 3. Create the underlying Microsoft Foundry AI Services resource in Central US
-az cognitiveservices account create \
-  --name hub-azure-wif-foundry \
-  --resource-group rg-azure-wif-demo \
-  --location centralus \
-  --kind "AIServices" \
-  --sku "S0" \
-  --yes
+# 3. Set your active subscription
+az account set --subscription "<YOUR_SUBSCRIPTION_ID_OR_NAME>"
 
-# 4. View Endpoint and Status
-az cognitiveservices account show \
-  --name hub-azure-wif-foundry \
-  --resource-group rg-azure-wif-demo \
-  --query "properties.endpoint" -o tsv
+# 4. Verify active subscription
+az account show --output table
 ```
 
-Your Microsoft Foundry environment in Central US is now ready for tool and MCP server deployment!
-
 ---
 
-## ☁️ Hosting & Connecting the MCP Server in Microsoft Foundry
+### Step 2: Deploy the MCP Server to Azure
 
-> [!NOTE]
-> ### 💡 Understanding Microsoft Foundry's "Connect a tool" & "Remote MCP Server endpoint"
-> When you open the Microsoft Foundry portal ([ai.azure.com](https://ai.azure.com)) and navigate to **Build &rarr; Tools**, you will see:
-> **"Connect a tool" &rarr; Model Context Protocol (MCP)** asking for a **"Remote MCP Server endpoint"**.
-> 
-> **Why?**
-> - Microsoft Foundry is an **AI Agent and Tool Consumer/Client**. It does not build or host arbitrary Node.js Express servers directly inside the Tools UI tab.
-> - Instead, Foundry connects agents to your tools via the **Model Context Protocol (MCP)** over HTTP/SSE.
-> - The MCP server (our Node.js code in `app/mcp-server` containing `tools.yaml`, `src/index.js`, and storage logic) is hosted as a web service in Azure (e.g. via lightweight **Azure App Service** or Container Apps), which provides the live HTTPS endpoint URL.
-> - You then paste that endpoint URL into Microsoft Foundry's **"Remote MCP Server endpoint"** field to connect your tools!
+The MCP server runs the declarative `tools.yaml` (protocol version `2026-07-15`) and exposes the JSON-RPC `/mcp` endpoint. You have 3 deployment options:
 
----
+#### Option A: One-Command Automated Script (`./scripts/deploy-azure-mcp.sh`) - Recommended
+This script checks authentication, deploys the code to Azure App Service in `Central US` (matching your storage buckets), configures environment variables, and verifies `/healthz`:
 
-### Step 1: Host the MCP Server in Azure (to get your HTTPS Endpoint)
-
-You have 3 easy options to host the MCP server and get an HTTPS endpoint URL:
-
-#### Option A: One-Command Azure Web App Deployment (`./scripts/foundry-deploy.sh`) - Recommended
 ```bash
-# Deploys app/mcp-server directly to Azure App Service (Linux Node.js 20) in Central US
-./scripts/foundry-deploy.sh
-```
-This script provisions an Azure App Service in `Central US` (matching your storage bucket region) and outputs your live endpoint URL:
-`https://azure-mcp-server-xxxx.azurewebsites.net/mcp`
+# Optional overrides (defaults to centralus and rg-azure-wif-poc)
+export AZURE_RESOURCE_GROUP="rg-azure-wif-poc"
+export AZURE_LOCATION="centralus"
+export AZURE_STORAGE_ACCOUNT="<YOUR_STORAGE_ACCOUNT_NAME>"
 
-#### Option B: Azure CLI (`az webapp up`)
+# Run automated deployment
+./scripts/deploy-azure-mcp.sh
+```
+
+#### Option B: Manual Setup via Azure Portal ([portal.azure.com](https://portal.azure.com))
+If you prefer configuring through the graphical Azure Portal:
+
+1. **Create the Web App**:
+   - Go to [portal.azure.com](https://portal.azure.com) &rarr; Search **App Services** &rarr; Click **+ Create** &rarr; **Web App**.
+   - **Subscription**: Your active subscription.
+   - **Resource Group**: Select your resource group (e.g. `rg-azure-wif-poc`).
+   - **Name**: Enter a unique name, e.g. `az-mcp-server-<unique>`.
+   - **Publish**: `Code`.
+   - **Runtime stack**: `Node 20 LTS`.
+   - **Operating System**: `Linux`.
+   - **Region**: **Central US** (same region as your storage account).
+   - **Pricing Plan**: `Basic B1` (or Free F1 for testing).
+   - Click **Review + create** &rarr; **Create**.
+
+2. **Configure Environment Variables**:
+   - Navigate to your newly created Web App &rarr; In the left sidebar under **Settings**, click **Environment variables** (or **Configuration**).
+   - Add the following App Settings:
+     | Name | Value | Purpose |
+     | :--- | :--- | :--- |
+     | `PORT` | `8080` | Server listening port |
+     | `WEBSITES_PORT` | `8080` | Directs Azure router to port 8080 |
+     | `MCP_PROTOCOL_VERSION` | `2026-07-15` | MCP July 2026 Protocol Specification |
+     | `AZURE_STORAGE_ACCOUNT` | `<YOUR_STORAGE_ACCOUNT_NAME>` | Storage account with `app1` and `app2` |
+     | `JWT_SECRET` | `demo-obo-token-secret-key-2026` | Secret for verifying OBO tokens |
+     | `NODE_ENV` | `production` | Node environment |
+   - Click **Apply** (or **Save**).
+
+3. **Deploy the Code**:
+   - In your local terminal:
+     ```bash
+     cd app/mcp-server
+     az webapp deploy \
+       --name "<YOUR_APP_NAME>" \
+       --resource-group "rg-azure-wif-poc" \
+       --src-path . \
+       --type zip
+     ```
+
+#### Option C: Local / Zero-Cost Simulation Mode (Offline / Pre-Cloud)
+You can run and test the complete agentic flow without deploying anything to Azure compute:
 ```bash
-cd app/mcp-server
+# 1. Run the complete end-to-end CLI demonstration (offline emulator)
+./scripts/run-demo.sh
 
-# Deploy Node.js code to Azure App Service in Central US
-az webapp up \
-  --name "azure-mcp-server-$RANDOM" \
-  --resource-group "rg-azure-wif-demo" \
-  --location "centralus" \
-  --runtime "NODE:20-lts" \
-  --sku B1
-
-# Configure environment variables
-az webapp config appsettings set \
-  --name "<YOUR_APP_NAME>" \
-  --resource-group "rg-azure-wif-demo" \
-  --settings \
-    PORT=8080 \
-    MCP_PROTOCOL_VERSION="2026-07-15" \
-    AZURE_STORAGE_ACCOUNT="azwifstoragepoc" \
-    JWT_SECRET="demo-obo-token-secret-key-2026"
+# 2. Or start the MCP server locally on port 8080:
+cd app/mcp-server && npm start
 ```
 
-#### Option C: Dev / Local Tunnel (No Azure Compute Cost)
-If your MCP server is already running locally (e.g. on Rancher Desktop or `npm start` on port 8080):
-```bash
-# Start a lightweight tunnel to expose local port 8080
-npx localtunnel --port 8080
-# Or using ngrok: ngrok http 8080
-```
-Use the generated HTTPS forwarding URL: `https://<tunnel-id>.loca.lt/mcp`
+---
+
+### Step 3: Verify the Deployed Azure MCP Server
+
+Once deployed, test your live endpoint directly from your terminal:
+
+1. **Verify Health Check**:
+   ```bash
+   curl -s https://<YOUR_APP_NAME>.azurewebsites.net/healthz
+   # Output: {"status":"UP","protocolVersion":"2026-07-15","toolsRegistered":2}
+   ```
+
+2. **Verify MCP Protocol Tools List (`2026-07-15` Spec)**:
+   ```bash
+   curl -s -X POST https://<YOUR_APP_NAME>.azurewebsites.net/mcp \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+   ```
+   You will receive the JSON-RPC response listing `tool1` (read/write on `app1` and `app2`) and `tool2` (read-only audit on `app1`).
 
 ---
 
-### Step 2: Connect the Tool in Microsoft Foundry Portal (`ai.azure.com`)
+### Step 4: Connect the Rancher Desktop Agent to the Azure MCP Server
 
-Now that you have your live HTTPS MCP endpoint URL, connect it in the Microsoft Foundry portal:
+Once the MCP server is live in Azure, point your local Rancher Desktop Agent Orchestrator to it:
 
-1. Open **[ai.azure.com](https://ai.azure.com)** and enter your project (`proj-azure-wif-mcp`).
-2. In the left sidebar navigation, click **Build** &rarr; select **Tools** (or within your agent's configuration, click **+ Add tool**).
-3. Click **Connect a tool** &rarr; select **Model Context Protocol (MCP)**.
-4. Fill in the connection form fields:
-   - **Name**: Enter `azure-storage-mcp`
-   - **Remote MCP Server endpoint**: Paste your endpoint URL (e.g. `https://azure-mcp-server-xxxx.azurewebsites.net/mcp`)
-   - **Authentication**:
-     - For production/OBO: Select **OAuth Identity Passthrough** (or **Microsoft Entra** with Project Managed Identity).
-     - For initial POC verification: Select **None** / **Anonymous** or **Key-based**.
-5. Look at the **bottom-right corner** of the dialog/drawer for the blue **"Create"** button:
-   > [!NOTE]
-   > - The button is labeled **"Create"** (or **"Add"** depending on your portal view), NOT "Connect" or "Save".
-   > - If you do not see it immediately, **scroll down to the bottom** of the slide-out panel.
-   > - The button will remain **disabled / greyed out** until a name and a valid `https://...` URL are typed into the endpoint field.
-6. Click **Create**:
-   Microsoft Foundry immediately contacts your endpoint, performs the protocol version `2026-07-15` handshake (`initialize`), calls `tools/list`, and loads your declarative tools:
-   - `tool1`: Read/Write access to containers `app1` and `app2`.
-   - `tool2`: Read-only audit access to container `app1`.
-
----
-
-### Step 3: Verify the Deployed MCP Server
-Once connected, test the endpoint directly:
-- **Health check**:
-  ```bash
-  curl https://<YOUR_APP_NAME>.azurewebsites.net/healthz
-  # Output: {"status":"UP","platform":"Microsoft Foundry","protocolVersion":"2026-07-15","toolsRegistered":2}
-  ```
-- **Declarative Tools List (MCP Protocol Spec 2026-07-15)**:
-  ```bash
-  curl -X POST https://<YOUR_APP_NAME>.azurewebsites.net/mcp \
-    -H "Content-Type: application/json" \
-    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-  ```
-  Output shows `tool1` and `tool2` registered and active with their input schemas!
-
----
+1. Export the endpoint environment variable:
+   ```bash
+   export AZURE_MCP_ENDPOINT="https://<YOUR_APP_NAME>.azurewebsites.net/mcp"
+   ```
+2. In Kubernetes (`k8s/agent-orchestrator-deployment.yaml`), ensure `AZURE_MCP_ENDPOINT` points to your Azure URL.
+3. When users log in via the Web Frontend (`alice` or `bob`) and submit prompts:
+   - The Agent Orchestrator acquires its SPIFFE SVID.
+   - Exchanges the Keycloak token for an RFC 8693 downscoped OBO token.
+   - Invokes `https://<YOUR_APP_NAME>.azurewebsites.net/mcp` with `Authorization: Bearer <OBO_TOKEN>`.
+   - The Azure MCP Server validates `sub` and `act.sub`, enforces scopes, and reads/writes Azure Storage!
 
 ## 🔍 Verification & Troubleshooting
 

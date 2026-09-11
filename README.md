@@ -120,8 +120,7 @@ azure-wif-poc/
 │   ├── install-infra.sh                # 1-click infrastructure installer
 │   ├── destroy-infra.sh                # Teardown script
 │   ├── cleanup.sh                      # Namespace reset
-│   ├── foundry-setup-project.sh        # Microsoft Foundry Hub & Project setup
-│   ├── foundry-deploy.sh               # 1-command Microsoft Foundry deployment
+│   ├── deploy-azure-mcp.sh             # 1-command Azure App Service deployment
 │   ├── run-demo.sh                     # Automated CLI demo runner
 │   └── test-all.sh                     # Full test and verification runner
 └── docs/                               # Architecture and Guides
