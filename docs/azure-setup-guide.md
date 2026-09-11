@@ -23,7 +23,7 @@ This document provides a comprehensive, step-by-step guide for provisioning the 
  │     ├─ Container: app1 (Storage Blob Data Contributor)      │
  │     └─ Container: app2 (Storage Blob Data Contributor)      │
  │  4. Low-Code Azure MCP Server (Protocol Spec July 2026)     │
- │     ├─ Runtime: Node.js 20 on Azure (Linux Web App / PaaS)  │
+ │     ├─ Runtime: Node.js 22 LTS on Azure (Linux Web App / PaaS)│
  │     └─ Tools:   tool1 (app1/app2 read/write), tool2 (audit) │
  └─────────────────────────────────────────────────────────────┘
 ```
@@ -297,7 +297,7 @@ If you prefer configuring through the graphical Azure Portal:
    - **Resource Group**: Select your resource group (e.g. `rg-azure-wif-poc`).
    - **Name**: Enter a unique name, e.g. `az-mcp-server-<unique>`.
    - **Publish**: `Code`.
-   - **Runtime stack**: `Node 20 LTS`.
+   - **Runtime stack**: `Node 22 LTS`.
    - **Operating System**: `Linux`.
    - **Region**: **Central US** (same region as your storage account).
    - **Pricing Plan**: `Basic B1` (or Free F1 for testing).
@@ -310,21 +310,26 @@ If you prefer configuring through the graphical Azure Portal:
      | :--- | :--- | :--- |
      | `PORT` | `8080` | Server listening port |
      | `WEBSITES_PORT` | `8080` | Directs Azure router to port 8080 |
+     | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` | Runs npm install during deployment |
      | `MCP_PROTOCOL_VERSION` | `2026-07-15` | MCP July 2026 Protocol Specification |
      | `AZURE_STORAGE_ACCOUNT` | `<YOUR_STORAGE_ACCOUNT_NAME>` | Storage account with `app1` and `app2` |
      | `JWT_SECRET` | `demo-obo-token-secret-key-2026` | Secret for verifying OBO tokens |
      | `NODE_ENV` | `production` | Node environment |
    - Click **Apply** (or **Save**).
 
-3. **Deploy the Code**:
-   - In your local terminal:
+3. **Deploy the Code via Azure CLI**:
+   - Package and deploy cleanly:
      ```bash
      cd app/mcp-server
+     zip -q -r /tmp/deploy.zip . -x "node_modules/*" -x ".git/*" -x "test/*" -x "test.sock"
      az webapp deploy \
        --name "<YOUR_APP_NAME>" \
        --resource-group "rg-azure-wif-poc" \
-       --src-path . \
-       --type zip
+       --src-path /tmp/deploy.zip \
+       --type zip \
+       --clean true \
+       --restart true
+     rm -f /tmp/deploy.zip
      ```
 
 #### Option C: Local / Zero-Cost Simulation Mode (Offline / Pre-Cloud)

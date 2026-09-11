@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # scripts/deploy-azure-mcp.sh
-# Deploys the Low-Code MCP Server to Azure App Service (Linux Node.js 20)
+# Deploys the Low-Code MCP Server to Azure App Service (Linux Node.js 22 LTS)
 # strictly checking Azure authentication, subscription, and deployment health.
 # ==============================================================================
 
@@ -43,7 +43,9 @@ echo "   ✅ Authenticated to Azure Subscription: $SUBSCRIPTION_NAME ($SUBSCRIPT
 RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-rg-azure-wif-poc}"
 LOCATION="${AZURE_LOCATION:-centralus}"
 STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT:-azwifstoragepoc}"
-APP_NAME="${MCP_APP_NAME:-az-mcp-server-$RANDOM}"
+PLAN_NAME="${AZURE_APP_PLAN:-plan-$RESOURCE_GROUP}"
+PLAN_SKU="${AZURE_APP_PLAN_SKU:-B1}"
+RUNTIME="NODE:22-lts"
 
 # Auto-detect location if Resource Group exists
 if az group show --name "$RESOURCE_GROUP" >/dev/null 2>&1; then
@@ -57,12 +59,29 @@ else
   az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output table
 fi
 
+# Detect existing app or generate stable unique name
+if [ -n "${MCP_APP_NAME:-}" ]; then
+  APP_NAME="$MCP_APP_NAME"
+else
+  EXISTING_APP=$(az webapp list --resource-group "$RESOURCE_GROUP" --query "[?starts_with(name, 'az-mcp-server')].name | [0]" -o tsv 2>/dev/null || true)
+  if [ -n "$EXISTING_APP" ]; then
+    APP_NAME="$EXISTING_APP"
+    echo "   ✅ Found existing Web App: $APP_NAME"
+  else
+    SUB_HASH=$(echo -n "$SUBSCRIPTION_ID" | md5 -q 2>/dev/null || echo -n "$SUBSCRIPTION_ID" | md5sum | cut -c1-6)
+    SUB_SUFFIX=$(echo "$SUB_HASH" | cut -c1-6)
+    APP_NAME="az-mcp-server-${SUB_SUFFIX}"
+  fi
+fi
+
 echo ""
 echo "Deployment Target:"
 echo "  * Resource Group:       $RESOURCE_GROUP"
 echo "  * Location:             $LOCATION"
+echo "  * App Service Plan:     $PLAN_NAME ($PLAN_SKU, Linux)"
 echo "  * Azure App Name:       $APP_NAME"
 echo "  * Azure Storage Acct:   $STORAGE_ACCOUNT"
+echo "  * Node Runtime:         $RUNTIME"
 echo ""
 
 # 4. Validate tools.yaml
@@ -74,45 +93,93 @@ echo "--> 2. Validating declarative tools.yaml..."
 echo "   - tool1: app1/app2 read/write (mcp:tool1 scope)"
 echo "   - tool2: app1 read-only audit (mcp:tool2 scope)"
 
-# 5. Deploy to Azure App Service
+# 5. Ensure App Service Plan
 echo ""
-echo "--> 3. Deploying code to Azure App Service (Plan SKU: B1 / Linux Node.js 20)..."
-echo "   (This may take 1-2 minutes to package, upload, and launch)"
+echo "--> 3. Checking Azure App Service Plan ($PLAN_NAME)..."
+if ! az appservice plan show --name "$PLAN_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+  echo "   Creating Linux App Service Plan '$PLAN_NAME' (SKU: $PLAN_SKU) in $LOCATION..."
+  az appservice plan create \
+    --name "$PLAN_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --location "$LOCATION" \
+    --is-linux \
+    --sku "$PLAN_SKU" \
+    --output table
+else
+  echo "   ✅ Found App Service Plan: $PLAN_NAME"
+fi
 
-cd "$MCP_DIR"
-az webapp up \
-  --name "$APP_NAME" \
-  --resource-group "$RESOURCE_GROUP" \
-  --location "$LOCATION" \
-  --runtime "NODE:20-lts" \
-  --sku B1 \
-  --output table
-
-# 6. Configure App Settings & Environment Variables
+# 6. Ensure Web App
 echo ""
-echo "--> 4. Setting Environment Variables and Storage Configuration..."
+echo "--> 4. Checking Azure Web App ($APP_NAME)..."
+if ! az webapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" >/dev/null 2>&1; then
+  echo "   Creating Linux Web App '$APP_NAME' with runtime $RUNTIME..."
+  az webapp create \
+    --name "$APP_NAME" \
+    --resource-group "$RESOURCE_GROUP" \
+    --plan "$PLAN_NAME" \
+    --runtime "$RUNTIME" \
+    --startup-file "node src/index.js" \
+    --output table
+else
+  echo "   ✅ Found Web App: $APP_NAME"
+fi
+
+# 7. Configure App Settings & Environment Variables
+echo ""
+echo "--> 5. Setting Environment Variables and Storage Configuration..."
 az webapp config appsettings set \
   --name "$APP_NAME" \
   --resource-group "$RESOURCE_GROUP" \
   --settings \
     PORT=8080 \
     WEBSITES_PORT=8080 \
+    SCM_DO_BUILD_DURING_DEPLOYMENT=true \
     MCP_PROTOCOL_VERSION="2026-07-15" \
     AZURE_STORAGE_ACCOUNT="$STORAGE_ACCOUNT" \
     JWT_SECRET="${JWT_SECRET:-demo-obo-token-secret-key-2026}" \
     NODE_ENV="production" \
   --output table
 
-# 7. Health Verification
+# 8. Package and Deploy Artifact
+echo ""
+echo "--> 6. Packaging and Deploying MCP server code to $APP_NAME..."
+TEMP_FILE=$(mktemp /tmp/mcp-deploy-XXXXXX)
+rm -f "$TEMP_FILE"
+ZIP_FILE="${TEMP_FILE}.zip"
+
+(
+  cd "$MCP_DIR"
+  zip -q -r "$ZIP_FILE" . \
+    -x "node_modules/*" \
+    -x ".git/*" \
+    -x "test/*" \
+    -x "test.sock" \
+    -x "*.log"
+)
+
+echo "   Deploying package ($(du -h "$ZIP_FILE" | cut -f1)) to Azure Web App..."
+az webapp deploy \
+  --name "$APP_NAME" \
+  --resource-group "$RESOURCE_GROUP" \
+  --src-path "$ZIP_FILE" \
+  --type zip \
+  --clean true \
+  --restart true \
+  --output table
+
+rm -f "$ZIP_FILE"
+
+# 9. Health Verification
 APP_URL="https://$APP_NAME.azurewebsites.net"
 MCP_ENDPOINT="$APP_URL/mcp"
 HEALTH_URL="$APP_URL/healthz"
 
 echo ""
-echo "--> 5. Verifying deployment health at $HEALTH_URL..."
+echo "--> 7. Verifying deployment health at $HEALTH_URL..."
 sleep 5
 
-MAX_RETRIES=6
+MAX_RETRIES=10
 RETRY_COUNT=0
 HEALTHY=false
 
