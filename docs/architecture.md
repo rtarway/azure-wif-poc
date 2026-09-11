@@ -22,31 +22,147 @@ In an **Agentic AI** ecosystem (where an LLM autonomously chooses which tools to
 
 This POC establishes zero-trust identity propagation across the entire invocation chain:
 
-```text
-[Browser User] 
-       │ (1. OIDC Login)
-       ▼
-[Keycloak IdP] ──> Bearer JWT (Alice: admin / Bob: regular-user)
-       │ 
-       ▼
-[Web Frontend (Outside SPIRE)] ──> Direct Browser HTTP
-       │ 
-       ▼ (2. Prompt + Keycloak JWT)
-[Agent Orchestrator (Inside SPIRE + Istio)]
-       │ ──> (3. Fetch Workload SVID: spiffe://example.org/ns/agent-system/sa/orchestrator-sa)
-       │ ──> (4. RFC 8693 Token Exchange & Downscoping)
-       ▼
-[Downscoped OBO JWT]
-  - sub: original user (e.g. bob@example.com)
-  - act: { sub: "spiffe://.../orchestrator-sa" }
-  - scope: "mcp:tool1" (downscoped by user role)
-       │
-       ▼ (5. tools/call with Bearer OBO JWT)
-[Azure Low-Code Microsoft Foundry MCP Server (July 2026 Spec)]
-       │
-       ├──> Validates sub, act, and scope
-       ├──> Tool1: Allowed (mcp:tool1 -> app1/app2 read/write)
-       └──> Tool2: Native MCP Error { isError: true } (mcp:tool2 missing)
+### 2.1 System Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph ClientBrowser["User Client Layer"]
+        Browser["User Web Browser"]
+    end
+
+    subgraph K8sCluster["Kubernetes Cluster (Rancher Desktop / k3s)"]
+        subgraph OutsideSPIRE["Namespace: agent-system (Outside SPIRE)"]
+            Frontend["Web Frontend Dashboard<br/>Port: 3000 / NodePort: 30000<br/>• Serves Browser UI<br/>• Initiates Keycloak Login<br/>• Proxies Chat Prompts"]
+        end
+
+        subgraph IdPLayer["Namespace: keycloak"]
+            Keycloak["Keycloak IdP (Port 8080)<br/>Realm: azure-wif-realm<br/>• Alice: admin (tool1 + tool2)<br/>• Bob: regular-user (tool1 only)"]
+        end
+
+        subgraph InsideSPIRE["Namespace: agent-system (Inside SPIRE + Istio Mesh)"]
+            Orchestrator["A2A Agent Orchestrator (Port 3001)<br/>• Simulated LLM Planning<br/>• SPIFFE Workload Identity Client<br/>• RFC 8693 Token Exchange Engine"]
+            SpireAgent["SPIRE Agent (DaemonSet)<br/>Workload API Socket: /run/spire/sockets/agent.sock"]
+        end
+
+        subgraph SPIREServer["Namespace: spire-server"]
+            SpireServer["SPIRE Server<br/>Trust Domain: example.org"]
+        end
+    end
+
+    subgraph AzureCloud["Microsoft Azure Cloud (Resource Group: rg-azure-wif-poc)"]
+        subgraph AppService["Azure App Service (Linux Node.js 22 LTS)"]
+            MCP["Azure Low-Code MCP Server (Port 8080 / HTTPS)<br/>• Endpoint: /mcp (JSON-RPC 2.0)<br/>• Spec: 2026-07-15 (July 2026)<br/>• Declarative Policy Engine (tools.yaml)<br/>• sub & act.sub Audit Trail Verification"]
+        end
+
+        subgraph CloudStorage["Azure Cloud Storage"]
+            StorageAcct["Azure Storage Account: azwifstoragepocrt<br/>• Container app1 (Financials / Compliance)<br/>• Container app2 (Customer Metrics)"]
+        end
+    end
+
+    %% Flow connections
+    Browser -->|1. HTTP / Web UI| Frontend
+    Frontend -->|2. Authenticate User| Keycloak
+    Keycloak -->>Frontend: User Bearer JWT (sub: user@example.com)
+    Frontend -->|3. POST /api/chat + User Bearer JWT| Orchestrator
+    Orchestrator -->|4. Request SVID via Workload API| SpireAgent
+    SpireAgent -->|Attest & Mint| SpireServer
+    SpireAgent -->>Orchestrator: JWT-SVID (spiffe://.../orchestrator-sa)
+    Orchestrator -->|5. RFC 8693 Exchange & Downscope| Orchestrator
+    Orchestrator -->|6. POST /mcp (JSON-RPC tools/call + Downscoped OBO JWT)| MCP
+    MCP -->|7. Authorize & Execute Tool| StorageAcct
+    StorageAcct -->>MCP: Blob Content
+    MCP -->>Orchestrator: CallToolResult (isError: false / true)
+    Orchestrator -->>Frontend: Agent Plan + Tool Execution Result
+    Frontend -->>Browser: Render Visual Result
+```
+
+---
+
+### 2.2 Sequence Diagram: Token Generation & End-to-End Delegation Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Human User (Alice / Bob)
+    participant UI as Web Frontend (Outside SPIRE)
+    participant IdP as Keycloak IdP
+    participant Agent as Agent Orchestrator (Inside SPIRE)
+    participant SPIRE as SPIRE Workload API
+    participant Engine as RFC 8693 Exchange Engine
+    participant MCP as Azure MCP Server (App Service)
+    participant Storage as Azure Storage (app1 / app2)
+
+    User->>UI: Select User & Submit Prompt (e.g. "Read financial report in app1")
+    UI->>IdP: Authenticate user (POST /api/login)
+    IdP-->>UI: User JWT (sub: bob@example.com, roles: [regular-user])
+    UI->>Agent: POST /api/agent/chat (Bearer: User JWT, prompt)
+    
+    rect rgb(240, 248, 255)
+        Note over Agent,SPIRE: Workload Identity Attestation
+        Agent->>Agent: LLM Simulator plans tool: 'tool1', container: 'app1', action: 'read'
+        Agent->>SPIRE: Fetch Workload SVID (aud: azure-mcp-server)
+        SPIRE-->>Agent: JWT-SVID (spiffeId: spiffe://example.org/ns/agent-system/sa/orchestrator-sa)
+    end
+
+    rect rgb(255, 250, 240)
+        Note over Agent,Engine: RFC 8693 Token Exchange & Downscoping
+        Agent->>Engine: exchangeToken(subjectToken: User JWT, actorToken: JWT-SVID, tool: 'tool1')
+        Engine->>Engine: Validate Subject (bob@example.com) & Actor (spiffeId)
+        Engine->>Engine: Downscope: regular-user -> mcp:tool1 (mcp:tool2 excluded)
+        Engine-->>Agent: Minted Downscoped OBO JWT { sub, act: { sub }, scope: "mcp:tool1" }
+    end
+
+    rect rgb(245, 255, 250)
+        Note over Agent,Storage: MCP Tool Execution in Azure
+        Agent->>MCP: POST /mcp (JSON-RPC 2.0: tools/call, Bearer: OBO JWT)
+        MCP->>MCP: verifyOboToken(authHeader) -> extract sub, act.sub, scope
+        MCP->>MCP: Check declarative policy: does scope have 'mcp:tool1'? -> YES
+        MCP->>Storage: Read blob 'financial-report.json' in 'app1'
+        Storage-->>MCP: Blob content ($14.2M Q2 Revenue)
+        MCP->>MCP: Log Audit Event: [MCP Storage] ACCESS GRANTED (principal: bob@example.com)
+        MCP-->>Agent: JSON-RPC Result: { isError: false, content: [...] }
+    end
+
+    Agent-->>UI: Complete Agent Response + Audit Trail
+    UI-->>User: Display Formatted Data & Proof of Access
+```
+
+---
+
+### 2.3 Sequence Diagram: Scope Downscoping & Denial Flow (Bob vs. Alice on Tool2)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Bob as Bob (Regular User)
+    actor Alice as Alice (Security Admin)
+    participant Agent as Agent Orchestrator
+    participant Engine as RFC 8693 Exchange Engine
+    participant MCP as Azure MCP Server
+
+    Note over Bob,MCP: Scenario A: Bob attempts sensitive audit via tool2
+    Bob->>Agent: "Run security audit on app1 using tool2"
+    Agent->>Engine: exchangeToken(User: Bob, Tool: 'tool2')
+    Engine->>Engine: Evaluate Bob's role: [regular-user] -> only eligible for mcp:tool1
+    Engine->>Engine: Downscope: mcp:tool2 NOT GRANTED (granted: [mcp:tool1])
+    Engine-->>Agent: OBO Token with scope="mcp:tool1"
+    Agent->>MCP: POST /mcp { method: "tools/call", name: "tool2" } (Bearer: scope=mcp:tool1)
+    MCP->>MCP: Policy Check: tool2 requires scope 'mcp:tool2'
+    MCP->>MCP: Log Security Audit: [MCP Security] ACCESS DENIED (principal: bob@example.com)
+    MCP-->>Agent: CallToolResult { isError: true, text: "MCP Authorization Denied: lacks mcp:tool2" }
+    Agent-->>Bob: ❌ Policy Check Failed: Denied by MCP Server
+
+    Note over Alice,MCP: Scenario B: Alice executes audit via tool2
+    Alice->>Agent: "Run security audit on app1 using tool2"
+    Agent->>Engine: exchangeToken(User: Alice, Tool: 'tool2')
+    Engine->>Engine: Evaluate Alice's role: [admin] -> eligible for mcp:tool1 & mcp:tool2
+    Engine->>Engine: Downscope: grant required scope "mcp:tool2"
+    Engine-->>Agent: OBO Token with scope="mcp:tool2"
+    Agent->>MCP: POST /mcp { method: "tools/call", name: "tool2" } (Bearer: scope=mcp:tool2)
+    MCP->>MCP: Policy Check: tool2 requires scope 'mcp:tool2' -> MATCHED!
+    MCP->>MCP: Log Storage Audit: [MCP Storage] ACCESS GRANTED (principal: alice@example.com)
+    MCP-->>Agent: CallToolResult { isError: false, text: "ISO27001 active..." }
+    Agent-->>Alice: ✅ Audit Report Retrieved Successfully
 ```
 
 ---
@@ -134,3 +250,170 @@ When the agent prepares to invoke the MCP server:
 | **Scope Downscoping** | None (blanket permissions) | Coarse (service-level) | **Fine-grained per-user, per-tool downscoping** |
 | **Confused Deputy Vulnerability** | High | High | **Zero (enforced at MCP tool execution layer)** |
 | **Protocol Version** | Ad-hoc REST | Ad-hoc REST | **MCP Specification July 2026 (`2026-07-15`)** |
+
+---
+
+## 5. RFC 8693 Implementation & Network Payloads
+
+### 5.1 Where does RFC 8693 Token Exchange happen?
+In this architecture, RFC 8693 Token Exchange executes in the **A2A Agent Orchestrator** ([app/agent-orchestrator/src/tokenExchange.js](file:///Users/rtarway/mygithubprojects/azure-wif-poc/app/agent-orchestrator/src/tokenExchange.js)).
+
+### 5.2 Are we calling the Microsoft Entra ID Token Endpoint?
+**No.** In this POC, the Agent Orchestrator runs an embedded RFC 8693 token exchange engine bridging the external enterprise IdP (**Keycloak**) and the workload identity provider (**SPIRE**).
+
+- **Why?** Microsoft Entra ID's native token endpoint (`login.microsoftonline.com/<tenant>/oauth2/v2.0/token`) requires:
+  1. An Azure App Registration with client credentials.
+  2. Users to be authenticated against Entra ID (not Keycloak), OR federated via Entra ID External ID.
+  3. Workload Identity Federation (WIF) federates external OIDC/SPIFFE tokens to an **Azure Managed Identity** (machine-to-machine), but does not natively combine external user claims (`sub`) with internal workload claims (`act`) in standard Entra app tokens unless using custom claims providers or an intermediary Token Exchange gateway.
+- **The POC Implementation**: The Agent Orchestrator acts as the RFC 8693 Authorization Server / PEP, minting a standard RFC 8693 JWT containing both `sub` (original user) and `act.sub` (SPIFFE workload ID) and sending it directly to the Azure MCP Server.
+
+### 5.3 What is Sent to Azure & What is Received?
+
+#### 1. What We Send to Azure (HTTP POST to Azure App Service):
+```http
+POST https://az-mcp-server-ea223e.azurewebsites.net/mcp HTTP/1.1
+Host: az-mcp-server-ea223e.azurewebsites.net
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Length: 147
+
+{
+  "jsonrpc": "2.0",
+  "id": "agent-exec-1726064034200",
+  "method": "tools/call",
+  "params": {
+    "name": "tool1",
+    "arguments": {
+      "container": "app1",
+      "action": "read",
+      "filename": "financial-report.json"
+    }
+  }
+}
+```
+
+**Decoded Bearer OBO Token Sent in Request**:
+```json
+{
+  "header": {
+    "alg": "HS256",
+    "typ": "JWT"
+  },
+  "payload": {
+    "iss": "https://identity.example.com/realms/azure-wif-realm",
+    "sub": "bob@example.com",
+    "email": "bob@example.com",
+    "aud": "azure-mcp-server",
+    "act": {
+      "sub": "spiffe://example.org/ns/agent-system/sa/orchestrator-sa"
+    },
+    "scope": "mcp:tool1",
+    "roles": ["regular-user"],
+    "downscoped": true,
+    "delegationType": "RFC8693_OBO",
+    "iat": 1726064034,
+    "exp": 1726064634
+  }
+}
+```
+
+#### 2. What We Receive from Azure (JSON-RPC 2.0 CallToolResult):
+**Scenario A: Success (Allowed by Policy)**:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "agent-exec-1726064034200",
+  "result": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"status\": \"SUCCESS\",\n  \"tool\": \"tool1\",\n  \"container\": \"app1\",\n  \"filename\": \"financial-report.json\",\n  \"action\": \"read\",\n  \"data\": {\n    \"quarter\": \"Q2-2026\",\n    \"revenue\": \"$14.2M\",\n    \"status\": \"Audited\"\n  }\n}"
+      }
+    ],
+    "audit": {
+      "timestamp": "2026-09-11T14:13:42.248Z",
+      "principal": "bob@example.com",
+      "actingAgent": "spiffe://example.org/ns/agent-system/sa/orchestrator-sa",
+      "requestedTool": "tool1",
+      "action": "read",
+      "container": "app1",
+      "filename": "financial-report.json",
+      "decision": "ALLOWED"
+    }
+  }
+}
+```
+
+**Scenario B: Failure / Scope Denial (Native Protocol Spec July 2026)**:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "agent-exec-1726064034201",
+  "result": {
+    "isError": true,
+    "content": [
+      {
+        "type": "text",
+        "text": "MCP Authorization Denied: Principal 'bob@example.com' (acting agent 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa') lacks required scope 'mcp:tool2' for tool 'tool2'. Current granted scopes: [mcp:tool1]."
+      }
+    ],
+    "audit": {
+      "timestamp": "2026-09-11T14:13:54.204Z",
+      "principal": "bob@example.com",
+      "actingAgent": "spiffe://example.org/ns/agent-system/sa/orchestrator-sa",
+      "requestedTool": "tool2",
+      "requiredScope": "mcp:tool2",
+      "grantedScopes": ["mcp:tool1"],
+      "decision": "DENIED_BY_POLICY"
+    }
+  }
+}
+```
+
+---
+
+## 6. How to Validate Logs in Azure
+
+You can inspect the live logs directly on Azure App Service to verify that `sub` (human user) and `act.sub` (Kubernetes SPIFFE identity) are preserved and enforced in Azure.
+
+### Method 1: Real-Time Log Stream via Azure CLI
+```bash
+az webapp log tail \
+  --resource-group rg-azure-wif-poc \
+  --name az-mcp-server-ea223e
+```
+
+### Method 2: Download Full Log Archive via Azure CLI
+```bash
+# 1. Download logs to a zip file
+az webapp log download \
+  --resource-group rg-azure-wif-poc \
+  --name az-mcp-server-ea223e \
+  --log-file /tmp/azure_logs.zip
+
+# 2. Extract and view MCP access and audit decisions
+unzip -p /tmp/azure_logs.zip 'LogFiles/*_default_docker.log' | grep 'MCP'
+```
+
+**Actual Live Azure App Service Output Verified**:
+```text
+2026-09-11T14:13:42.249Z [MCP Storage] ACCESS GRANTED: {"timestamp":"2026-09-11T14:13:42.248Z","principal":"bob@example.com","actingAgent":"spiffe://example.org/ns/agent-system/sa/orchestrator-sa","requestedTool":"tool1","action":"read","container":"app1","filename":"financial-report.json","decision":"ALLOWED"}
+
+2026-09-11T14:13:54.205Z [MCP Security] ACCESS DENIED: {"timestamp":"2026-09-11T14:13:54.204Z","principal":"bob@example.com","actingAgent":"spiffe://example.org/ns/agent-system/sa/orchestrator-sa","requestedTool":"tool2","requiredScope":"mcp:tool2","grantedScopes":["mcp:tool1"],"decision":"DENIED_BY_POLICY"}
+
+2026-09-11T14:14:33.591Z [MCP Storage] ACCESS GRANTED: {"timestamp":"2026-09-11T14:14:33.590Z","principal":"alice@example.com","actingAgent":"spiffe://example.org/ns/agent-system/sa/orchestrator-sa","requestedTool":"tool2","action":"read","container":"app1","filename":"financial-report.json","decision":"ALLOWED"}
+```
+
+### Method 3: Azure Portal GUI
+1. Sign in to [portal.azure.com](https://portal.azure.com).
+2. Open Resource Group **`rg-azure-wif-poc`**.
+3. Select App Service **`az-mcp-server-ea223e`**.
+4. In the left navigation bar under **Monitoring**, select **Log Stream**.
+
+---
+
+## 7. Storage Access & Identity Mapping Analysis
+For an in-depth evaluation of whether users should have direct Azure Service Principals and Azure Storage ACLs versus the Application-Enforced Delegated Gateway pattern, refer to:
+- [docs/storage-access-and-identity-analysis.md](file:///Users/rtarway/mygithubprojects/azure-wif-poc/docs/storage-access-and-identity-analysis.md)
+
