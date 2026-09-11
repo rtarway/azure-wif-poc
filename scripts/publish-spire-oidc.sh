@@ -7,7 +7,13 @@
 # ==============================================================================
 set -euo pipefail
 
-STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT:-azwifstoragepoc2026}"
+RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-rg-azure-wif-poc}"
+if [ -z "${AZURE_STORAGE_ACCOUNT:-}" ]; then
+  DETECTED_STORAGE=$(az storage account list --resource-group "$RESOURCE_GROUP" --query "[?starts_with(name, 'azwifstorage')].name | [0]" -o tsv 2>/dev/null || true)
+  STORAGE_ACCOUNT="${DETECTED_STORAGE:-azwifstoragepocrt}"
+else
+  STORAGE_ACCOUNT="$AZURE_STORAGE_ACCOUNT"
+fi
 CONTAINER_NAME="spire-oidc"
 PERMANENT_ISSUER_URL="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${CONTAINER_NAME}"
 

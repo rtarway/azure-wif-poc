@@ -42,7 +42,12 @@ echo "   ✅ Authenticated to Azure Subscription: $SUBSCRIPTION_NAME ($SUBSCRIPT
 # 3. Parameters
 RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-rg-azure-wif-poc}"
 LOCATION="${AZURE_LOCATION:-centralus}"
-STORAGE_ACCOUNT="${AZURE_STORAGE_ACCOUNT:-azwifstoragepoc}"
+if [ -z "${AZURE_STORAGE_ACCOUNT:-}" ]; then
+  DETECTED_STORAGE=$(az storage account list --resource-group "$RESOURCE_GROUP" --query "[?starts_with(name, 'azwifstorage')].name | [0]" -o tsv 2>/dev/null || true)
+  STORAGE_ACCOUNT="${DETECTED_STORAGE:-azwifstoragepocrt}"
+else
+  STORAGE_ACCOUNT="$AZURE_STORAGE_ACCOUNT"
+fi
 PLAN_NAME="${AZURE_APP_PLAN:-plan-$RESOURCE_GROUP}"
 PLAN_SKU="${AZURE_APP_PLAN_SKU:-B1}"
 RUNTIME="NODE:22-lts"

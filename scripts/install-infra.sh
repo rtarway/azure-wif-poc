@@ -61,10 +61,19 @@ helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/nu
 helm repo update >/dev/null 2>&1
 echo "    Helm repositories updated."
 
-# Step 3: Run Terraform Init & Apply
-echo "--> 3. Applying Terraform Infrastructure (SPIRE, Istio, Keycloak)..."
-terraform -chdir="${TERRAFORM_DIR}" init
-terraform -chdir="${TERRAFORM_DIR}" apply -auto-approve
+# Step 3: Verify or Apply Terraform Infrastructure (SPIRE, Istio, Keycloak)
+echo "--> 3. Checking core infrastructure (SPIRE, Istio, Keycloak)..."
+HAS_SPIRE=$(kubectl get statefulset -n spire-server spire-server -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+HAS_KEYCLOAK=$(kubectl get deployment -n keycloak keycloak -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+HAS_ISTIO=$(kubectl get deployment -n istio-system istiod -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+
+if [ "${HAS_SPIRE:-0}" -gt 0 ] && [ "${HAS_KEYCLOAK:-0}" -gt 0 ] && [ "${HAS_ISTIO:-0}" -gt 0 ]; then
+  echo "    ✅ SPIRE, Istio, and Keycloak are already deployed and running in the cluster. Skipping Terraform apply."
+else
+  echo "    Applying Terraform Infrastructure (SPIRE, Istio, Keycloak)..."
+  terraform -chdir="${TERRAFORM_DIR}" init
+  terraform -chdir="${TERRAFORM_DIR}" apply -auto-approve
+fi
 
 # Step 4: Build Microservice Docker Images
 echo "--> 4. Building local Docker images in Rancher Desktop..."
