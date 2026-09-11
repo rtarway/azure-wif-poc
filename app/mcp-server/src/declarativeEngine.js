@@ -125,6 +125,35 @@ class DeclarativeEngine {
       };
     }
 
+    // In-Process Fine-Grained Policy (FGP) evaluation defined in tools.yaml
+    if (Array.isArray(toolDef.fine_grained_policies)) {
+      for (const policy of toolDef.fine_grained_policies) {
+        if (this._evaluateFgp(policy.condition, { args, auth: authContext })) {
+          if (policy.effect === 'DENY') {
+            const auditLog = {
+              timestamp: new Date().toISOString(),
+              principal: sub,
+              actingAgent: actSub,
+              requestedTool: toolName,
+              policyId: policy.id,
+              decision: 'DENIED_BY_FGP'
+            };
+            console.warn(`[MCP FGP] ACCESS DENIED: ${JSON.stringify(auditLog)}`);
+            return {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: policy.message || `Fine-Grained Policy Denial (${policy.id})`
+                }
+              ],
+              audit: auditLog
+            };
+          }
+        }
+      }
+    }
+
     try {
       let operationResult;
       if (action === 'read') {
@@ -178,6 +207,16 @@ class DeclarativeEngine {
           }
         ]
       };
+    }
+  }
+
+  _evaluateFgp(condition, context) {
+    try {
+      const fn = new Function('args', 'auth', `return Boolean(${condition});`);
+      return fn(context.args, context.auth);
+    } catch (err) {
+      console.warn(`[MCP FGP] Error evaluating condition '${condition}':`, err.message);
+      return false;
     }
   }
 }

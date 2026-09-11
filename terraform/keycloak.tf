@@ -50,7 +50,7 @@ resource "kubernetes_deployment" "keycloak" {
         container {
           name  = "keycloak"
           image = "quay.io/keycloak/keycloak:24.0.4"
-          args  = ["start-dev", "--import-realm"]
+          args  = ["start-dev", "--import-realm", "--features=token-exchange,admin-fine-grained-authz"]
 
           env {
             name  = "KEYCLOAK_ADMIN"
@@ -86,7 +86,7 @@ resource "kubernetes_deployment" "keycloak" {
 
           volume_mount {
             name       = "keycloak-data"
-            mount_path = "/opt/keycloak/data"
+            mount_path = "/opt/keycloak/data/h2"
           }
 
           resources {

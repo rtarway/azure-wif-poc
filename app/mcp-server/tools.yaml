@@ -37,6 +37,17 @@ tools:
         - "container"
         - "action"
         - "filename"
+    fine_grained_policies:
+      - id: "prevent_audit_tampering"
+        description: "Prevents modifying compliance or audit files"
+        effect: "DENY"
+        condition: "args.action == 'write' && (args.filename.includes('compliance') || args.filename.includes('audit'))"
+        message: "Fine-Grained Policy Denial: Compliance and audit records are immutable and cannot be overwritten."
+      - id: "restricted_extensions"
+        description: "Enforce allowed data file extensions"
+        effect: "DENY"
+        condition: "!args.filename.endsWith('.json') && !args.filename.endsWith('.txt') && !args.filename.endsWith('.yaml')"
+        message: "Fine-Grained Policy Denial: Only .json, .txt, and .yaml files are permitted."
 
   - name: "tool2"
     title: "Auditing & Read-Only Tool for App1"
@@ -65,3 +76,9 @@ tools:
         - "container"
         - "action"
         - "filename"
+    fine_grained_policies:
+      - id: "block_private_keys"
+        description: "Prevents reading private key or credential blobs"
+        effect: "DENY"
+        condition: "args.filename.includes('key') || args.filename.includes('secret') || args.filename.includes('cred')"
+        message: "Fine-Grained Policy Denial: Access to credential or private key files is strictly prohibited."

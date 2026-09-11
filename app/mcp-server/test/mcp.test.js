@@ -251,4 +251,68 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
     assert.strictEqual(res.result.isError, true);
     assert.ok(res.result.content[0].text.includes('MCP Authentication Failure'));
   });
+
+  test('FGP in tools.yaml: Denies write to compliance or audit files (in-process FGP)', async () => {
+    const token = mintOboToken({
+      sub: 'alice@example.com',
+      scopes: ['mcp:tool1']
+    });
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'tool1',
+        arguments: { container: 'app1', action: 'write', filename: 'compliance-bypass.txt', content: 'fake' }
+      },
+      token
+    );
+
+    assert.strictEqual(res.result.isError, true);
+    assert.ok(res.result.content[0].text.includes('immutable and cannot be overwritten'));
+    assert.strictEqual(res.result.audit.decision, 'DENIED_BY_FGP');
+  });
+
+  test('FGP in tools.yaml: Denies unsupported file extension (.exe)', async () => {
+    const token = mintOboToken({
+      sub: 'alice@example.com',
+      scopes: ['mcp:tool1']
+    });
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'tool1',
+        arguments: { container: 'app1', action: 'read', filename: 'malicious.exe' }
+      },
+      token
+    );
+
+    assert.strictEqual(res.result.isError, true);
+    assert.ok(res.result.content[0].text.includes('Only .json, .txt, and .yaml files are permitted'));
+    assert.strictEqual(res.result.audit.decision, 'DENIED_BY_FGP');
+  });
+
+  test('Pattern C: Operation dynamically mints short-lived scoped SAS credential', async () => {
+    const token = mintOboToken({
+      sub: 'bob@example.com',
+      scopes: ['mcp:tool1']
+    });
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'tool1',
+        arguments: { container: 'app1', action: 'read', filename: 'financial-report.json' }
+      },
+      token
+    );
+
+    assert.strictEqual(res.result.isError, false);
+    const parsedData = JSON.parse(res.result.content[0].text);
+    assert.ok(parsedData.data.patternC, 'Response must include Pattern C scoped credential metadata');
+    assert.strictEqual(parsedData.data.patternC.credentialType, 'DYNAMIC_USER_DELEGATION_SAS');
+    assert.strictEqual(parsedData.data.patternC.permissions, 'r');
+    assert.strictEqual(parsedData.data.patternC.ttlSeconds, 60);
+    assert.ok(parsedData.data.patternC.sasToken.includes('sig='));
+  });
 });

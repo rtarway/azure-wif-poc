@@ -9,6 +9,7 @@ const llmSimulator = require('./llmSimulator');
 const spireClient = require('./spireClient');
 const tokenExchange = require('./tokenExchange');
 const jwtUtil = require('./jwtUtil');
+const opaPolicy = require('./opaPolicy');
 
 const app = express();
 app.use(express.json());
@@ -118,17 +119,42 @@ app.post('/api/agent/chat', async (req, res) => {
   const plan = llmSimulator.plan(prompt, userClaims);
 
   // 3. Acquire Agent SPIRE Workload Identity SVID
-  const agentSvid = await spireClient.fetchJwtSvid('azure-mcp-server');
+  const agentSvid = await spireClient.fetchJwtSvid('mcp-azure-service');
 
-  // 4. RFC 8693 On-Behalf-Of (OBO) Token Exchange with Scope Downscoping
-  const exchangeResult = tokenExchange.exchangeToken({
+  // 4. Orchestrator Fine-Grained Policy (FGP) Evaluation via OPA
+  const opaResult = opaPolicy.evaluate({
+    user: userClaims,
+    plan,
+    context: req.body.context || {}
+  });
+
+  if (!opaResult.allowed) {
+    return res.json({
+      prompt,
+      user: userClaims,
+      agent: {
+        spiffeId: agentSvid.spiffeId,
+        workloadVerified: true
+      },
+      plan,
+      opaPolicy: opaResult,
+      mcpResponse: {
+        isError: true,
+        content: [{ type: 'text', text: opaResult.reason }]
+      },
+      status: 'FAILED_ORCHESTRATOR_FGP'
+    });
+  }
+
+  // 5. RFC 8693 On-Behalf-Of (OBO) Token Exchange with Scope Downscoping
+  const exchangeResult = await tokenExchange.exchangeToken({
     userToken,
     agentSvid,
-    targetAudience: 'azure-mcp-server',
+    targetAudience: 'mcp-azure-service',
     requestedTool: plan.plannedTool
   });
 
-  // 5. Invoke Azure MCP Server with the Downscoped OBO Token
+  // 6. Invoke Azure MCP Server with the Downscoped OBO Token
   const mcpResponse = await callMcpServer(
     MCP_SERVER_URL,
     plan.plannedTool,
@@ -136,7 +162,7 @@ app.post('/api/agent/chat', async (req, res) => {
     exchangeResult.exchangedToken
   );
 
-  // 6. Assemble Comprehensive Audit & Execution Result
+  // 7. Assemble Comprehensive Audit & Execution Result
   const responsePayload = {
     prompt,
     user: userClaims,
@@ -144,11 +170,13 @@ app.post('/api/agent/chat', async (req, res) => {
       spiffeId: agentSvid.spiffeId,
       workloadVerified: true
     },
+    opaPolicy: opaResult,
     oboExchange: {
       subject: exchangeResult.claims.sub,
       actor: exchangeResult.claims.act.sub,
       delegationType: 'RFC8693_OBO',
       downscopedScopes: exchangeResult.claims.scope,
+      tokenType: exchangeResult.tokenType,
       tokenPreview: exchangeResult.exchangedToken.slice(0, 30) + '...'
     },
     plan,

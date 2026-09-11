@@ -73,6 +73,21 @@ data:
           "protocol": "openid-connect"
         }
       ],
+      "scopeMappings": [
+        {
+          "clientScope": "mcp:tool1",
+          "roles": [
+            "admin",
+            "regular-user"
+          ]
+        },
+        {
+          "clientScope": "mcp:tool2",
+          "roles": [
+            "admin"
+          ]
+        }
+      ],
       "clients": [
         {
           "clientId": "web-frontend-client",
@@ -94,6 +109,58 @@ data:
             "roles",
             "profile",
             "email"
+          ],
+          "optionalClientScopes": [
+            "mcp:tool1",
+            "mcp:tool2"
+          ]
+        },
+        {
+          "clientId": "agent-orchestrator-client",
+          "name": "Agent Orchestrator Service",
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "clientAuthenticatorType": "client-secret",
+          "secret": "orchestrator-secret-key-2026",
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": true,
+          "serviceAccountsEnabled": true,
+          "authorizationServicesEnabled": true,
+          "defaultClientScopes": [
+            "roles",
+            "profile",
+            "email"
+          ],
+          "optionalClientScopes": [
+            "mcp:tool1",
+            "mcp:tool2"
+          ],
+          "protocolMappers": [
+            {
+              "name": "actor-spiffe-id",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-hardcoded-claim-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "act.sub",
+                "claim.value": "spiffe://example.org/ns/agent-system/sa/orchestrator-sa",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true"
+              }
+            },
+            {
+              "name": "mcp-audience-mapper",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-audience-mapper",
+              "consentRequired": false,
+              "config": {
+                "included.client.audience": "mcp-azure-service",
+                "id.token.claim": "false",
+                "access.token.claim": "true"
+              }
+            }
           ]
         },
         {
@@ -101,7 +168,68 @@ data:
           "name": "Azure MCP Resource Service",
           "enabled": true,
           "bearerOnly": true,
-          "protocol": "openid-connect"
+          "protocol": "openid-connect",
+          "defaultClientScopes": [
+            "roles"
+          ],
+          "optionalClientScopes": [
+            "mcp:tool1",
+            "mcp:tool2"
+          ],
+          "protocolMappers": [
+            {
+              "name": "actor-spiffe-id",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-hardcoded-claim-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "act.sub",
+                "claim.value": "spiffe://example.org/ns/agent-system/sa/orchestrator-sa",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true"
+              }
+            },
+            {
+              "name": "username",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-property-mapper",
+              "consentRequired": false,
+              "config": {
+                "user.attribute": "username",
+                "claim.name": "preferred_username",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true"
+              }
+            },
+            {
+              "name": "email",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-property-mapper",
+              "consentRequired": false,
+              "config": {
+                "user.attribute": "email",
+                "claim.name": "email",
+                "jsonType.label": "String",
+                "id.token.claim": "true",
+                "access.token.claim": "true"
+              }
+            },
+            {
+              "name": "realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "claim.name": "roles",
+                "jsonType.label": "String",
+                "multivalued": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true"
+              }
+            }
+          ]
         }
       ]
     }

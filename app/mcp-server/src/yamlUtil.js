@@ -24,9 +24,10 @@ function parseSimpleYaml(content) {
   const result = { tools: [] };
   let currentTool = null;
   let currentArrayField = null;
-  let currentObjectField = null;
   let inProperties = false;
+  let inPolicies = false;
   let currentProperty = null;
+  let currentPolicy = null;
 
   for (let rawLine of lines) {
     const line = rawLine.replace(/\r$/, '');
@@ -42,17 +43,19 @@ function parseSimpleYaml(content) {
         name: trimmed.split(':')[1].trim().replace(/['"]/g, ''),
         allowed_containers: [],
         allowed_actions: [],
-        inputSchema: { type: 'object', properties: {}, required: [] }
+        inputSchema: { type: 'object', properties: {}, required: [] },
+        fine_grained_policies: []
       };
       result.tools.push(currentTool);
       currentArrayField = null;
-      currentObjectField = null;
       inProperties = false;
+      inPolicies = false;
       currentProperty = null;
+      currentPolicy = null;
     } else if (currentTool) {
       if (trimmed.startsWith('title:')) {
         currentTool.title = trimmed.substring(6).trim().replace(/^['"]|['"]$/g, '');
-      } else if (trimmed.startsWith('description:')) {
+      } else if (trimmed.startsWith('description:') && !inPolicies) {
         currentTool.description = trimmed.substring(12).trim().replace(/^['"]|['"]$/g, '');
       } else if (trimmed.startsWith('required_scope:')) {
         currentTool.required_scope = trimmed.substring(15).trim().replace(/['"]/g, '');
@@ -61,18 +64,41 @@ function parseSimpleYaml(content) {
       } else if (trimmed.startsWith('allowed_containers:')) {
         currentArrayField = 'allowed_containers';
         inProperties = false;
+        inPolicies = false;
       } else if (trimmed.startsWith('allowed_actions:')) {
         currentArrayField = 'allowed_actions';
         inProperties = false;
+        inPolicies = false;
       } else if (trimmed.startsWith('inputSchema:')) {
         currentArrayField = null;
         inProperties = false;
+        inPolicies = false;
       } else if (trimmed.startsWith('properties:')) {
         inProperties = true;
+        inPolicies = false;
         currentArrayField = null;
       } else if (trimmed.startsWith('required:')) {
         currentArrayField = 'required';
         inProperties = false;
+        inPolicies = false;
+      } else if (trimmed.startsWith('fine_grained_policies:')) {
+        inPolicies = true;
+        inProperties = false;
+        currentArrayField = null;
+      } else if (inPolicies) {
+        if (trimmed.startsWith('- id:')) {
+          currentPolicy = {
+            id: trimmed.substring(5).trim().replace(/['"]/g, '')
+          };
+          currentTool.fine_grained_policies.push(currentPolicy);
+        } else if (currentPolicy) {
+          const colonIdx = trimmed.indexOf(':');
+          if (colonIdx > 0) {
+            const key = trimmed.slice(0, colonIdx).trim();
+            const val = trimmed.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+            currentPolicy[key] = val;
+          }
+        }
       } else if (trimmed.startsWith('- ') && currentArrayField) {
         const val = trimmed.substring(2).trim().replace(/['"]/g, '');
         if (currentArrayField === 'required') {

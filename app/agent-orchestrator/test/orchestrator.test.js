@@ -137,13 +137,13 @@ describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
     assert.strictEqual(plan3.arguments.action, 'read');
   });
 
-  test('RFC 8693 Token Exchange downscopes scopes for Regular User (Bob)', () => {
+  test('RFC 8693 Token Exchange downscopes scopes for Regular User (Bob)', async () => {
     const bobKeycloakToken = mintKeycloakToken({
       sub: 'bob@example.com',
       roles: ['regular-user']
     });
 
-    const exchangeResult = tokenExchange.exchangeToken({
+    const exchangeResult = await tokenExchange.exchangeToken({
       userToken: bobKeycloakToken,
       agentSvid: { spiffeId: 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa' },
       requestedTool: 'tool1'
@@ -155,13 +155,13 @@ describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
     assert.strictEqual(exchangeResult.audit.grantedScopes.includes('mcp:tool2'), false);
   });
 
-  test('RFC 8693 Token Exchange allows tool2 scope for Administrator (Alice)', () => {
+  test('RFC 8693 Token Exchange allows tool2 scope for Administrator (Alice)', async () => {
     const aliceKeycloakToken = mintKeycloakToken({
       sub: 'alice@example.com',
       roles: ['admin']
     });
 
-    const exchangeResult = tokenExchange.exchangeToken({
+    const exchangeResult = await tokenExchange.exchangeToken({
       userToken: aliceKeycloakToken,
       agentSvid: { spiffeId: 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa' },
       requestedTool: 'tool2'
@@ -170,6 +170,26 @@ describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
     assert.strictEqual(exchangeResult.claims.sub, 'alice@example.com');
     assert.strictEqual(exchangeResult.claims.act.sub, 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa');
     assert.strictEqual(exchangeResult.claims.scope, 'mcp:tool2');
+  });
+
+  test('Orchestrator OPA FGP: Denies execution when weekend policy is triggered', async () => {
+    const bobToken = mintKeycloakToken({ sub: 'bob@example.com', roles: ['regular-user'] });
+
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/agent/chat',
+      headers: { Authorization: `Bearer ${bobToken}` },
+      body: {
+        prompt: 'Write update to app2 container',
+        context: { simulate_weekend: true }
+      }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.status, 'FAILED_ORCHESTRATOR_FGP');
+    assert.strictEqual(res.body.opaPolicy.allowed, false);
+    assert.ok(res.body.opaPolicy.reason.includes('prohibited on weekends'));
+    assert.strictEqual(res.body.mcpResponse.isError, true);
   });
 
   test('End-to-End Chat: Bob successfully calls tool1 on app1/app2', async () => {

@@ -83,13 +83,14 @@ app.post('/api/login', async (req, res) => {
 
 // Proxy Chat/Prompt to Agent Orchestrator
 app.post('/api/chat', async (req, res) => {
-  const { prompt, token } = req.body || {};
+  const { prompt } = req.body || {};
+  const token = (req.body && req.body.token) || (req.headers.authorization ? req.headers.authorization.replace(/^Bearer\s+/i, '') : null);
 
   if (!prompt) {
     return res.status(400).json({ error: 'Missing prompt.' });
   }
 
-  const payload = JSON.stringify({ prompt });
+  const payload = JSON.stringify({ prompt, token, context: req.body && req.body.context });
   const headers = {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(payload)
