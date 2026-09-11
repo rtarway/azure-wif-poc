@@ -23,11 +23,36 @@ for cmd in kubectl terraform helm docker; do
   fi
 done
 
+# Auto-heal Rancher Desktop VM connectivity if localhost port-forwarder dropped
+if ! kubectl cluster-info >/dev/null 2>&1; then
+  if curl -k -s --connect-timeout 2 https://192.168.64.2:6443/version >/dev/null 2>&1; then
+    echo "    Reconnecting kubectl to active Rancher Desktop VM (192.168.64.2:6443)..."
+    kubectl config set-cluster rancher-desktop --server=https://192.168.64.2:6443 >/dev/null 2>&1 || true
+  fi
+fi
+
 if ! kubectl cluster-info >/dev/null 2>&1; then
   echo "ERROR: Cannot connect to Kubernetes. Ensure Rancher Desktop is running."
   exit 1
 fi
 echo "    Connected to Kubernetes: $(kubectl config current-context)"
+
+# Auto-heal Docker socket connectivity if host forwarder dropped
+if ! docker ps >/dev/null 2>&1; then
+  LIMA_SSH_CFG="$HOME/Library/Application Support/rancher-desktop/lima/0/ssh.config"
+  if [ -f "$LIMA_SSH_CFG" ]; then
+    echo "    Reconnecting Docker daemon socket from Rancher Desktop VM..."
+    rm -f "$HOME/.rd/docker.sock"
+    ssh -F "$LIMA_SSH_CFG" -f -N -L "$HOME/.rd/docker.sock:/var/run/docker.sock" -L 127.0.0.1:6443:127.0.0.1:6443 lima-0 >/dev/null 2>&1 || true
+    sleep 1
+  fi
+fi
+
+if ! docker ps >/dev/null 2>&1; then
+  echo "ERROR: Cannot connect to Docker daemon. Ensure Rancher Desktop container runtime is running."
+  exit 1
+fi
+echo "    Connected to Docker daemon."
 
 # Step 2: Helm Repositories
 echo "--> 2. Ensuring Helm chart repositories are up to date..."
