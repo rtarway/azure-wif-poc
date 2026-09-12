@@ -91,7 +91,7 @@ describe('Web Frontend Tests (Outside SPIRE)', () => {
     assert.deepStrictEqual(res.body.user.scopes, ['mcp:tool1', 'mcp:tool2']);
 
     const decoded = jwtUtil.decode(res.body.token);
-    assert.strictEqual(decoded.sub, 'alice@example.com');
+    assert.strictEqual(decoded.sub, 'alice@rtarwaygmail.onmicrosoft.com');
     assert.ok(decoded.scope.includes('mcp:tool1'));
     assert.ok(decoded.scope.includes('mcp:tool2'));
   });
@@ -110,7 +110,7 @@ describe('Web Frontend Tests (Outside SPIRE)', () => {
     assert.deepStrictEqual(res.body.user.scopes, ['mcp:tool1']);
 
     const decoded = jwtUtil.decode(res.body.token);
-    assert.strictEqual(decoded.sub, 'bob@example.com');
+    assert.strictEqual(decoded.sub, 'bob@rtarwaygmail.onmicrosoft.com');
     assert.strictEqual(decoded.scope, 'mcp:tool1');
     assert.ok(!decoded.scope.includes('mcp:tool2'));
   });

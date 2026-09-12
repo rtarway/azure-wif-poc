@@ -84,7 +84,11 @@ app.post('/mcp', async (req, res) => {
     console.log(`[MCP-RPC] Has Authorization Header: ${!!authHeader}`);
     console.log(`[MCP-RPC] Has X-Delegated-Identity: ${!!delegatedHeader}`);
 
+    const correlationId = req.headers['x-correlation-id'] || req.headers['x-ms-client-request-id'] || ('chain-' + Date.now());
+    console.log(`[MCP-RPC] Correlation ID: ${correlationId}`);
+
     const authContext = verifyOboToken(authHeader, delegatedHeader);
+    authContext.correlationId = correlationId;
 
     if (!authContext.authenticated) {
       console.warn(`[MCP-RPC] ❌ Authentication failed: ${authContext.error}`);
@@ -105,7 +109,7 @@ app.post('/mcp', async (req, res) => {
       });
     }
 
-    console.log(`[MCP-RPC] Authenticated Principal: ${authContext.sub} | Actor: ${authContext.act?.sub}`);
+    console.log(`[MCP-RPC] Authenticated Principal: ${authContext.sub} | Actor: ${authContext.act?.sub} | Chain: [${(authContext.actorChain || []).join(' -> ')}]`);
     const toolResult = await engine.executeTool(name, toolArgs, authContext);
     console.log(`[MCP-RPC] Completed 'tools/call' -> isError: ${toolResult.isError}`);
     console.log(`=============================================================\n`);

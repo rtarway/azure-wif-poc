@@ -30,9 +30,15 @@ class LLMSimulator {
     }
 
     // Detect Action
-    if (text.includes('write') || text.includes('update') || text.includes('create') || text.includes('upload')) {
+    if (text.includes('write') || text.includes('update') || text.includes('create') || text.includes('upload') || text.includes('overwrite')) {
       action = 'write';
-      filename = text.includes('app2') ? 'agent-notes.txt' : 'status-update.txt';
+      if (text.includes('compliance')) {
+        filename = 'compliance.txt';
+      } else if (text.includes('app2')) {
+        filename = 'agent-notes.txt';
+      } else {
+        filename = 'status-update.txt';
+      }
       content = `Automated agent entry generated at ${new Date().toISOString()} on behalf of ${userContext.sub || 'user'}. Prompt: "${prompt}"`;
       reasoning.push(`4. Intent detected: WRITE operation (file: ${filename}).`);
     } else {
@@ -44,7 +50,7 @@ class LLMSimulator {
 
     // Tool Selection Logic
     // Tool2 is dedicated to app1 read-only audits (restricted to admin)
-    if (text.includes('tool2') || text.includes('audit') || text.includes('compliance')) {
+    if (action !== 'write' && (text.includes('tool2') || text.includes('audit'))) {
       tool = 'tool2';
       container = 'app1'; // tool2 strictly targets app1
       action = 'read';

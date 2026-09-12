@@ -60,20 +60,20 @@ graph TB
     end
 
     %% Flow connections
-    Browser -->|1. HTTP / Web UI| Frontend
-    Frontend -->|2. Authenticate User| Keycloak
-    Keycloak -->>Frontend: User Bearer JWT (sub: user@example.com)
-    Frontend -->|3. POST /api/chat + User Bearer JWT| Orchestrator
-    Orchestrator -->|4. Request SVID via Workload API| SpireAgent
-    SpireAgent -->|Attest & Mint| SpireServer
-    SpireAgent -->>Orchestrator: JWT-SVID (spiffe://.../orchestrator-sa)
-    Orchestrator -->|5. RFC 8693 Exchange & Downscope| Orchestrator
-    Orchestrator -->|6. POST /mcp (JSON-RPC tools/call + Downscoped OBO JWT)| MCP
-    MCP -->|7. Authorize & Execute Tool| StorageAcct
-    StorageAcct -->>MCP: Blob Content
-    MCP -->>Orchestrator: CallToolResult (isError: false / true)
-    Orchestrator -->>Frontend: Agent Plan + Tool Execution Result
-    Frontend -->>Browser: Render Visual Result
+    Browser -->|"1. HTTP / Web UI"| Frontend
+    Frontend -->|"2. Authenticate User"| Keycloak
+    Keycloak -.->|"2a. User Bearer JWT (sub: user@example.com)"| Frontend
+    Frontend -->|"3. POST /api/chat + User Bearer JWT"| Orchestrator
+    Orchestrator -->|"4. Request SVID via Workload API"| SpireAgent
+    SpireAgent -->|"Attest & Mint"| SpireServer
+    SpireAgent -.->|"4a. JWT-SVID (spiffe://.../orchestrator-sa)"| Orchestrator
+    Orchestrator -->|"5. RFC 8693 Exchange & Downscope"| Orchestrator
+    Orchestrator -->|"6. POST /mcp (JSON-RPC tools/call + Downscoped OBO JWT)"| MCP
+    MCP -->|"7. Authorize & Execute Tool"| StorageAcct
+    StorageAcct -.->|"7a. Blob Content"| MCP
+    MCP -.->|"7b. CallToolResult (isError: false / true)"| Orchestrator
+    Orchestrator -.->|"8. Agent Plan + Tool Execution Result"| Frontend
+    Frontend -.->|"9. Render Visual Result"| Browser
 ```
 
 ---

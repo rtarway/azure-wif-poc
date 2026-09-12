@@ -40,16 +40,16 @@ app.post('/api/login', async (req, res) => {
   const userConfigs = {
     alice: {
       username: 'alice',
-      email: 'alice@example.com',
-      displayName: 'Alice (Security Admin)',
-      roles: ['admin', 'default-roles-azure-wif'],
+      email: 'alice@rtarwaygmail.onmicrosoft.com',
+      displayName: 'Alice (Auditor / Storage Role Assigned)',
+      roles: ['admin', 'auditor', 'Storage Blob Data Reader'],
       scopes: ['mcp:tool1', 'mcp:tool2']
     },
     bob: {
       username: 'bob',
-      email: 'bob@example.com',
-      displayName: 'Bob (Data Operator)',
-      roles: ['regular-user', 'default-roles-azure-wif'],
+      email: 'bob@rtarwaygmail.onmicrosoft.com',
+      displayName: 'Bob (Data Contributor on app2 / No app1 Role)',
+      roles: ['regular-user', 'Storage Blob Data Contributor'],
       scopes: ['mcp:tool1']
     }
   };

@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Azure WIF & Agentic MCP POC</title>
+  <title>Azure WIF & RFC 8693 Agentic MCP POC</title>
   <style>
     :root {
-      --bg: #0f172a;
+      --bg: #0b1120;
       --card-bg: #1e293b;
+      --card-sub-bg: #0f172a;
       --border: #334155;
       --text: #f8fafc;
       --text-muted: #94a3b8;
@@ -16,67 +17,99 @@
       --success: #22c55e;
       --danger: #ef4444;
       --warning: #f59e0b;
-      --code-bg: #0b1120;
+      --purple: #a855f7;
+      --code-bg: #030712;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body { background-color: var(--bg); color: var(--text); padding: 24px; }
-    .container { max-width: 1200px; margin: 0 auto; }
+    .container { max-width: 1300px; margin: 0 auto; }
     header { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
-    h1 { font-size: 24px; color: var(--primary); display: flex; align-items: center; gap: 10px; }
-    .subtitle { color: var(--text-muted); font-size: 14px; margin-top: 4px; }
-    .badge-outside-spire { background: #6366f1; color: white; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-    .grid { display: grid; grid-template-columns: 360px 1fr; gap: 20px; }
+    h1 { font-size: 24px; color: var(--primary); display: flex; align-items: center; gap: 12px; }
+    .subtitle { color: var(--text-muted); font-size: 13px; margin-top: 6px; line-height: 1.5; }
+    .badge-outside-spire { background: #6366f1; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-rfc8693 { background: #059669; color: white; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    
+    .grid { display: grid; grid-template-columns: 380px 1fr; gap: 24px; }
     .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-bottom: 20px; }
-    .card h2 { font-size: 16px; margin-bottom: 12px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .card h2 { font-size: 15px; margin-bottom: 12px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    
     .btn { background: var(--border); color: var(--text); border: none; padding: 10px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
     .btn:hover { background: #475569; }
     .btn-primary { background: var(--primary); color: #0f172a; font-weight: 600; }
     .btn-primary:hover { background: var(--primary-hover); color: white; }
     .btn-alice { border-left: 4px solid var(--primary); }
     .btn-bob { border-left: 4px solid var(--warning); }
-    .btn-active { outline: 2px solid var(--primary); }
-    .user-pill { padding: 10px; border-radius: 6px; background: var(--code-bg); margin-top: 10px; border: 1px solid var(--border); }
-    .role-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-left: 6px; }
+    .btn-active { outline: 2px solid var(--primary); box-shadow: 0 0 10px rgba(56, 189, 248, 0.4); }
+    
+    .user-pill { padding: 12px; border-radius: 6px; background: var(--card-sub-bg); margin-top: 12px; border: 1px solid var(--border); }
+    .role-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-left: 4px; }
     .role-admin { background: rgba(56, 189, 248, 0.2); color: var(--primary); border: 1px solid var(--primary); }
     .role-regular { background: rgba(245, 158, 11, 0.2); color: var(--warning); border: 1px solid var(--warning); }
-    textarea { width: 100%; height: 80px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 10px; font-size: 13px; resize: vertical; margin-top: 8px; margin-bottom: 10px; }
+    
+    textarea { width: 100%; height: 75px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 10px; font-size: 13px; resize: vertical; margin-top: 8px; margin-bottom: 10px; }
     textarea:focus { outline: 1px solid var(--primary); }
-    .quick-prompts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
-    .quick-btn { text-align: left; font-size: 12px; padding: 8px 10px; background: rgba(255,255,255,0.05); }
-    .quick-btn:hover { background: rgba(255,255,255,0.1); }
-    .trace-step { background: var(--code-bg); border-left: 4px solid var(--border); border-radius: 4px; padding: 12px; margin-bottom: 12px; }
-    .trace-step.allowed { border-left-color: var(--success); }
-    .trace-step.denied { border-left-color: var(--danger); }
-    .trace-header { display: flex; justify-content: space-between; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
-    pre { background: #050811; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 11px; color: #38bdf8; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
-    .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+    
+    .quick-prompts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .quick-btn { text-align: left; font-size: 12px; padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; cursor: pointer; transition: all 0.2s; }
+    .quick-btn:hover { background: rgba(255,255,255,0.08); border-color: var(--primary); }
+    .quick-btn b { color: var(--primary); }
+    .quick-btn .desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    
+    /* Hop-to-Hop Pipeline Styles */
+    .pipeline-container { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+    .hop-card { background: var(--card-sub-bg); border: 1px solid var(--border); border-radius: 6px; padding: 14px; position: relative; }
+    .hop-card.success { border-left: 4px solid var(--success); }
+    .hop-card.denied { border-left: 4px solid var(--danger); }
+    .hop-card.warning { border-left: 4px solid var(--warning); }
+    .hop-card.info { border-left: 4px solid var(--primary); }
+    
+    .hop-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .hop-title { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .hop-tag { font-size: 10px; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
+    .tag-jwt { background: #3b82f6; color: white; }
+    .tag-spiffe { background: #8b5cf6; color: white; }
+    .tag-rfc8693 { background: #10b981; color: white; }
+    .tag-azure { background: #0284c7; color: white; }
+    
+    .claim-grid { display: grid; grid-template-columns: 140px 1fr; gap: 6px; font-size: 12px; margin-bottom: 6px; }
+    .claim-label { color: var(--text-muted); font-weight: 500; }
+    .claim-value { font-family: monospace; color: #e2e8f0; word-break: break-all; }
+    .claim-highlight { background: rgba(56, 189, 248, 0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.3); color: var(--primary); }
+    .claim-act-box { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 4px; padding: 8px; margin-top: 6px; }
+    .claim-act-box.tampered { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.4); }
+    
+    pre { background: var(--code-bg); padding: 10px; border-radius: 4px; font-family: monospace; font-size: 11px; color: #38bdf8; overflow-x: auto; white-space: pre-wrap; word-break: break-all; margin-top: 6px; border: 1px solid rgba(255,255,255,0.05); }
+    
+    .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
     .status-success { background: rgba(34, 197, 94, 0.2); color: var(--success); border: 1px solid var(--success); }
     .status-failed { background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid var(--danger); }
+    .status-neutral { background: rgba(148, 163, 184, 0.2); color: var(--text-muted); border: 1px solid var(--border); }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <h1>
-        Azure WIF + Agentic Flow POC
+        Azure WIF + Agentic MCP POC
         <span class="badge-outside-spire">Frontend: Outside SPIRE</span>
+        <span class="badge-rfc8693">RFC 8693 Compliant</span>
       </h1>
       <div class="subtitle">
-        Keycloak IdP &bull; SPIRE + Istio Workload Identity &bull; RFC 8693 Downscoped OBO Exchange &bull; Low-Code Microsoft Foundry MCP Server (July 2026 Spec)
+        Entra ID (rtarwaygmail.onmicrosoft.com) &bull; SPIRE + Istio Workload Identity &bull; Cryptographic RFC 8693 Recursive <code>act</code> Claims &bull; 60s JIT Azure User-Delegation (Zero Account Keys)
       </div>
     </header>
 
     <div class="grid">
-      <!-- Left Column: User & Auth -->
+      <!-- Left Column: User & Auth Matrix -->
       <div>
         <div class="card">
-          <h2>1. Keycloak Authentication</h2>
+          <h2>1. Simulated Keycloak / Entra Identity</h2>
           <div style="display: flex; gap: 8px;">
             <button id="btn-alice" class="btn btn-alice" style="flex:1;" onclick="login('alice')">
-              Alice (Admin)
+              Alice (Admin / Reader)
             </button>
             <button id="btn-bob" class="btn btn-bob" style="flex:1;" onclick="login('bob')">
-              Bob (Regular)
+              Bob (Regular / Contributor)
             </button>
           </div>
 
@@ -84,36 +117,53 @@
             <div style="font-weight: 600; font-size: 13px;" id="user-name"></div>
             <div style="color: var(--text-muted); font-size: 12px; margin-top: 2px;" id="user-email"></div>
             <div style="margin-top: 6px; font-size: 11px;">
-              Allowed Scopes: <span style="color: var(--primary);" id="user-scopes"></span>
+              <b>Allowed Scopes:</b> <span style="color: var(--primary);" id="user-scopes"></span>
+            </div>
+            <div style="margin-top: 4px; font-size: 11px;">
+              <b>Azure Storage Role:</b> <span style="color: var(--success);" id="user-azure-role"></span>
             </div>
           </div>
         </div>
 
         <div class="card">
-          <h2>2. Architecture Matrix</h2>
+          <h2>2. Azure Cloud RBAC & Security Matrix</h2>
           <div style="font-size: 12px; color: var(--text-muted); line-height: 1.6;">
-            <div>&bull; <b>Web Frontend</b>: Outside SPIRE (Direct Browser HTTP)</div>
-            <div>&bull; <b>Agent Orchestrator</b>: Inside SPIRE / Istio (SPIFFE SVID)</div>
-            <div>&bull; <b>Azure MCP Server</b>: Low-Code Microsoft Foundry (July 2026)</div>
-            <div>&bull; <b>Tool1</b>: Read/Write app1 & app2 (All Users)</div>
-            <div>&bull; <b>Tool2</b>: Read app1 only (Admin Only)</div>
+            <div>&bull; <b>Tenant ID</b>: <code>81f26b58-159c-4879-80a0-bab30b5b4dd3</code></div>
+            <div>&bull; <b>Verified Domain</b>: <code>rtarwaygmail.onmicrosoft.com</code></div>
+            <div>&bull; <b>Storage Account</b>: <code>azwifstoragepocrt</code></div>
+            <div>&bull; <b>Root Account Keys</b>: <span style="color: var(--danger); font-weight: bold;">PERMANENTLY DELETED</span></div>
+            <div>&bull; <b>Container <code>app1</code></b>: Alice (Reader) | <b>Bob: NO ACCESS (HTTP 403)</b></div>
+            <div>&bull; <b>Container <code>app2</code></b>: Alice & Bob (Contributor: Read/Write)</div>
+            <div>&bull; <b>Tool RBAC</b>: <code>tool1</code> (Read/Write) | <code>tool2</code> (Admin Audit Only)</div>
+            <div>&bull; <b>Delegation Protocol</b>: RFC 8693 (OAuth 2.0 Token Exchange) with recursive <code>act</code> claims</div>
           </div>
         </div>
       </div>
 
-      <!-- Right Column: Agent Prompt & Live Trace -->
+      <!-- Right Column: Agent Prompt & Live Hop-to-Hop Trace -->
       <div>
         <div class="card">
           <h2>3. Agent Prompt & Intent Execution</h2>
           <div class="quick-prompts">
-            <button class="btn quick-btn" onclick="setPrompt('Write new deployment status report to app2')">
-              ⚡ <b>Scenario A (Tool1)</b>: Write status report to app2 (Permitted for Bob & Alice)
+            <button class="quick-btn" onclick="setPrompt('Write new deployment status report to app2')">
+              <div>⚡ <b>Scenario A (Tool1)</b>: Write deployment status report to app2</div>
+              <div class="desc">Target: <code>app2</code> container &bull; Permitted for Bob & Alice via Storage Blob Data Contributor</div>
             </button>
-            <button class="btn quick-btn" onclick="setPrompt('Read quarterly financial report from app1')">
-              ⚡ <b>Scenario B (Tool1)</b>: Read financial data from app1 (Permitted for Bob & Alice)
+            <button class="quick-btn" onclick="setPrompt('Read quarterly financial report from app1')">
+              <div>⚡ <b>Scenario B (Tool1)</b>: Read financial data from app1</div>
+              <div class="desc">Target: <code>app1</code> container &bull; Allowed for Alice (Reader) &bull; <b style="color:var(--danger)">HTTP 403 Cloud IAM Denied for Bob</b></div>
             </button>
-            <button class="btn quick-btn" onclick="setPrompt('Audit app1 compliance records with tool2')">
-              ⚡ <b>Scenario C (Tool2)</b>: Audit app1 with tool2 (Allowed for Alice, Rejected for Bob)
+            <button class="quick-btn" onclick="setPrompt('Audit app1 compliance records with tool2')">
+              <div>⚡ <b>Scenario C (Tool2)</b>: Audit app1 compliance records with tool2</div>
+              <div class="desc">Target: <code>tool2</code> &bull; Allowed for Alice (Admin scope) &bull; <b style="color:var(--warning)">Blocked for Bob (Tool RBAC)</b></div>
+            </button>
+            <button class="quick-btn" onclick="setPrompt('Inject untrusted rogue actor into RFC 8693 act claim')">
+              <div>🚨 <b>Scenario D (Security)</b>: Inject untrusted rogue actor into RFC 8693 act claim</div>
+              <div class="desc">Tests in-band recursive verification &bull; <b style="color:var(--danger)">Cryptographically Rejected (HTTP 401/403)</b></div>
+            </button>
+            <button class="quick-btn" onclick="setPrompt('Overwrite compliance.txt (In-Process FGP violation)')">
+              <div>🛡️ <b>Scenario E (Fine-Grained Policy)</b>: Overwrite compliance.txt in app1</div>
+              <div class="desc">Target: <code>compliance.txt</code> &bull; <b style="color:var(--danger)">Blocked by Declarative tools.yaml FGP immutability</b></div>
             </button>
           </div>
 
@@ -125,51 +175,152 @@
         </div>
 
         <div class="card">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
-            <h2 style="border: none; padding: 0; margin: 0;">4. Real-Time OBO Delegation & Token Chain</h2>
-            <div id="status-indicator"></div>
-          </div>
+          <h2>
+            <span>4. Hop-to-Hop Token Propagation & Delegation Chain</span>
+            <span id="status-indicator"></span>
+          </h2>
 
           <div id="results-container" style="display: none;">
-            <!-- Step 1: User Token -->
-            <div class="trace-step">
-              <div class="trace-header">
-                <span>1. Human User Keycloak Identity</span>
-                <span style="color: var(--text-muted);">Subject Token</span>
+            <div class="pipeline-container">
+              <!-- Hop 1: Human User -->
+              <div class="hop-card info" id="card-hop1">
+                <div class="hop-header">
+                  <div class="hop-title">
+                    <span>👤 Hop 1: Human User Keycloak / Entra Token</span>
+                    <span class="hop-tag tag-jwt">Subject Token</span>
+                  </div>
+                  <span class="status-badge status-success" id="hop1-status">AUTHENTICATED</span>
+                </div>
+                <div class="claim-grid">
+                  <div class="claim-label">Subject (sub):</div>
+                  <div class="claim-value claim-highlight" id="hop1-sub"></div>
+                  <div class="claim-label">Email:</div>
+                  <div class="claim-value" id="hop1-email"></div>
+                  <div class="claim-label">Entra Roles:</div>
+                  <div class="claim-value" id="hop1-roles"></div>
+                  <div class="claim-label">OAuth Scopes:</div>
+                  <div class="claim-value" id="hop1-scopes"></div>
+                  <div class="claim-label">Token Issuer (iss):</div>
+                  <div class="claim-value" id="hop1-iss"></div>
+                </div>
+                <details open style="margin-top: 10px;">
+                  <summary style="cursor: pointer; font-size: 11px; font-weight: 600; color: var(--primary); outline: none;">📜 Decoded Readable Token (Header & Claims Payload)</summary>
+                  <pre id="hop1-decoded" style="margin-top: 6px;"></pre>
+                </details>
+                <details style="margin-top: 6px;">
+                  <summary style="cursor: pointer; font-size: 10px; color: var(--text-muted); outline: none;">🔑 View Raw Encoded Bearer JWT</summary>
+                  <pre id="hop1-raw" style="font-size: 10px; color: #94a3b8; word-break: break-all; margin-top: 4px;"></pre>
+                </details>
               </div>
-              <pre id="trace-user"></pre>
+
+              <!-- Hop 2: Agent SPIRE Workload Identity -->
+              <div class="hop-card info" id="card-hop2">
+                <div class="hop-header">
+                  <div class="hop-title">
+                    <span>🤖 Hop 2: Agent Workload Identity (SPIRE SVID)</span>
+                    <span class="hop-tag tag-spiffe">Actor Identity</span>
+                  </div>
+                  <span class="status-badge status-success" id="hop2-status">SPIFFE VERIFIED</span>
+                </div>
+                <div class="claim-grid">
+                  <div class="claim-label">SPIFFE ID:</div>
+                  <div class="claim-value claim-highlight" id="hop2-spiffeid"></div>
+                  <div class="claim-label">Intended Audience:</div>
+                  <div class="claim-value" id="hop2-audience"></div>
+                  <div class="claim-label">Assertion Method:</div>
+                  <div class="claim-value" id="hop2-method"></div>
+                  <div class="claim-label">LLM Plan & Intent:</div>
+                  <div class="claim-value" id="hop2-plan"></div>
+                </div>
+                <details open style="margin-top: 10px;">
+                  <summary style="cursor: pointer; font-size: 11px; font-weight: 600; color: var(--primary); outline: none;">📜 Decoded Readable SPIFFE SVID Assertion (Workload Claims)</summary>
+                  <pre id="hop2-decoded" style="margin-top: 6px;"></pre>
+                </details>
+                <details style="margin-top: 6px;">
+                  <summary style="cursor: pointer; font-size: 10px; color: var(--text-muted); outline: none;">🔑 View Raw Encoded SVID JWT</summary>
+                  <pre id="hop2-raw" style="font-size: 10px; color: #94a3b8; word-break: break-all; margin-top: 4px;"></pre>
+                </details>
+              </div>
+
+              <!-- Hop 3: RFC 8693 Delegated Token -->
+              <div class="hop-card" id="card-hop3">
+                <div class="hop-header">
+                  <div class="hop-title">
+                    <span>🔗 Hop 3: RFC 8693 Downscoped Delegated Token (Orchestrator ➔ MCP)</span>
+                    <span class="hop-tag tag-rfc8693">OBO Exchange</span>
+                  </div>
+                  <span class="status-badge" id="hop3-status"></span>
+                </div>
+                <div class="claim-grid">
+                  <div class="claim-label">Delegated Subject (sub):</div>
+                  <div class="claim-value" id="hop3-sub"></div>
+                  <div class="claim-label">Target Audience (aud):</div>
+                  <div class="claim-value" id="hop3-aud"></div>
+                  <div class="claim-label">Downscoped Scope:</div>
+                  <div class="claim-value claim-highlight" id="hop3-scope"></div>
+                  <div class="claim-label">Token TTL:</div>
+                  <div class="claim-value" id="hop3-ttl"></div>
+                  <div class="claim-label">RFC 8693 act Claim:</div>
+                  <div class="claim-value">
+                    <div class="claim-act-box" id="hop3-act-box">
+                      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Cryptographically Verifiable Actor Chain:</div>
+                      <pre id="hop3-act" style="margin: 0; padding: 6px;"></pre>
+                    </div>
+                  </div>
+                </div>
+                <details open style="margin-top: 10px;">
+                  <summary style="cursor: pointer; font-size: 11px; font-weight: 600; color: var(--primary); outline: none;">📜 Decoded RFC 8693 Delegated Token (Full Claims with act chain)</summary>
+                  <pre id="hop3-decoded" style="margin-top: 6px;"></pre>
+                </details>
+                <details style="margin-top: 6px;">
+                  <summary style="cursor: pointer; font-size: 10px; color: var(--text-muted); outline: none;">🔑 View Raw Encoded RFC 8693 Token</summary>
+                  <pre id="hop3-raw" style="font-size: 10px; color: #94a3b8; word-break: break-all; margin-top: 4px;"></pre>
+                </details>
+              </div>
+
+              <!-- Hop 4: Azure User-Delegation Storage Token -->
+              <div class="hop-card" id="card-hop4">
+                <div class="hop-header">
+                  <div class="hop-title">
+                    <span>☁️ Hop 4: 60s JIT User-Delegation Token (MCP ➔ Azure Storage)</span>
+                    <span class="hop-tag tag-azure">Cloud IAM Kernel</span>
+                  </div>
+                  <span class="status-badge" id="hop4-status"></span>
+                </div>
+                <div class="claim-grid">
+                  <div class="claim-label">Credential Type:</div>
+                  <div class="claim-value" id="hop4-cred-type"></div>
+                  <div class="claim-label">Credential TTL:</div>
+                  <div class="claim-value claim-highlight" id="hop4-ttl"></div>
+                  <div class="claim-label">Target Resource:</div>
+                  <div class="claim-value" id="hop4-resource"></div>
+                  <div class="claim-label">Storage Account:</div>
+                  <div class="claim-value" id="hop4-account"></div>
+                  <div class="claim-label">Chain Fingerprint:</div>
+                  <div class="claim-value" id="hop4-binding"></div>
+                  <div class="claim-label">Cloud IAM Decision:</div>
+                  <div class="claim-value" id="hop4-decision"></div>
+                </div>
+                <details open style="margin-top: 10px;">
+                  <summary style="cursor: pointer; font-size: 11px; font-weight: 600; color: var(--primary); outline: none;">📜 Decoded 60s JIT User-Delegation Storage Credential & IAM Audit</summary>
+                  <pre id="hop4-decoded" style="margin-top: 6px;"></pre>
+                </details>
+                <details style="margin-top: 6px;">
+                  <summary style="cursor: pointer; font-size: 10px; color: var(--text-muted); outline: none;">🔑 View Storage Request Header & Signature</summary>
+                  <pre id="hop4-raw" style="font-size: 10px; color: #94a3b8; word-break: break-all; margin-top: 4px;"></pre>
+                </details>
+              </div>
             </div>
 
-            <!-- Step 2: SPIRE Identity -->
-            <div class="trace-step">
-              <div class="trace-header">
-                <span>2. Agent Workload Identity (SPIRE + Istio)</span>
-                <span style="color: var(--text-muted);">Actor Token</span>
-              </div>
-              <pre id="trace-agent"></pre>
-            </div>
-
-            <!-- Step 3: RFC 8693 Token Exchange -->
-            <div class="trace-step">
-              <div class="trace-header">
-                <span>3. RFC 8693 Downscoped OBO Token Exchange</span>
-                <span style="color: var(--primary);">sub + act claims</span>
-              </div>
-              <pre id="trace-obo"></pre>
-            </div>
-
-            <!-- Step 4: Azure MCP Server Execution -->
-            <div id="trace-mcp-step" class="trace-step">
-              <div class="trace-header">
-                <span>4. Azure Low-Code Microsoft Foundry MCP Server (Spec 2026-07-15)</span>
-                <span id="trace-mcp-status"></span>
-              </div>
+            <!-- Execution Result Audit Box -->
+            <div style="margin-top: 14px;">
+              <h3 style="font-size: 13px; color: var(--text-muted); margin-bottom: 6px;">MCP Execution & Cloud IAM Audit Log:</h3>
               <pre id="trace-mcp"></pre>
             </div>
           </div>
 
-          <div id="empty-state" style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 30px;">
-            Select a user and submit a prompt to view the real-time identity propagation and downscoped OBO token chain.
+          <div id="empty-state" style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 40px;">
+            Select a test user (Alice or Bob) and run a scenario above to inspect the real-time RFC 8693 token propagation and cryptographic delegation chain.
           </div>
         </div>
       </div>
@@ -195,13 +346,16 @@
         currentToken = data.token;
         currentUser = data.user;
 
-        document.getElementById('btn-alice').innerHTML = userType === 'alice' ? '✅ Alice (Admin)' : 'Alice (Admin)';
-        document.getElementById('btn-bob').innerHTML = userType === 'bob' ? '✅ Bob (Regular)' : 'Bob (Regular)';
+        document.getElementById('btn-alice').innerHTML = userType === 'alice' ? '✅ Alice (Admin / Reader)' : 'Alice (Admin / Reader)';
+        document.getElementById('btn-bob').innerHTML = userType === 'bob' ? '✅ Bob (Regular / Contributor)' : 'Bob (Regular / Contributor)';
 
         document.getElementById('user-info').style.display = 'block';
         document.getElementById('user-name').innerHTML = `${currentUser.displayName} <span class="role-badge ${currentUser.roles.includes('admin') ? 'role-admin' : 'role-regular'}">${currentUser.roles.includes('admin') ? 'Admin' : 'Regular User'}</span>`;
         document.getElementById('user-email').textContent = currentUser.email;
         document.getElementById('user-scopes').textContent = currentUser.scopes.join(', ');
+        document.getElementById('user-azure-role').textContent = userType === 'alice' 
+          ? 'Storage Blob Data Reader (app1 & app2)' 
+          : 'Storage Blob Data Contributor (app2 ONLY; No app1 role)';
       } catch (err) {
         alert('Login failed: ' + err.message);
       }
@@ -225,7 +379,7 @@
 
       document.getElementById('empty-state').style.display = 'none';
       document.getElementById('results-container').style.display = 'block';
-      document.getElementById('status-indicator').innerHTML = '<span style="color: var(--primary); font-size: 12px;">Agent reasoning & executing...</span>';
+      document.getElementById('status-indicator').innerHTML = '<span style="color: var(--primary); font-size: 12px;">Agent reasoning & delegating...</span>';
 
       try {
         const res = await fetch('/api/chat', {
@@ -238,43 +392,118 @@
         });
 
         const data = await res.json();
-
-        // 1. User Trace
-        document.getElementById('trace-user').textContent = JSON.stringify({
-          principal: data.user?.sub,
-          roles: data.user?.roles
-        }, null, 2);
-
-        // 2. Agent Trace
-        document.getElementById('trace-agent').textContent = JSON.stringify({
-          spiffeId: data.agent?.spiffeId,
-          workloadVerified: data.agent?.workloadVerified,
-          llmReasoning: data.plan?.reasoning
-        }, null, 2);
-
-        // 3. OBO Trace
-        document.getElementById('trace-obo').textContent = JSON.stringify({
-          delegationType: data.oboExchange?.delegationType,
-          subject: data.oboExchange?.subject,
-          actor: data.oboExchange?.actor,
-          downscopedScopes: data.oboExchange?.downscopedScopes,
-          tokenPreview: data.oboExchange?.tokenPreview
-        }, null, 2);
-
-        // 4. MCP Trace
+        const hop = data.hopToHop || {};
         const isError = data.mcpResponse?.isError;
-        const mcpStep = document.getElementById('trace-mcp-step');
-        mcpStep.className = 'trace-step ' + (isError ? 'denied' : 'allowed');
+        const isRogue = prompt.toLowerCase().includes('rogue actor') || prompt.toLowerCase().includes('tamper');
 
-        document.getElementById('trace-mcp-status').innerHTML = isError
-          ? '<span class="status-badge status-failed">MCP ERROR (DENIED)</span>'
-          : '<span class="status-badge status-success">ALLOWED</span>';
+        // Hop 1: Human User
+        const h1 = hop.hop1_userToken || {};
+        document.getElementById('hop1-sub').textContent = h1.sub || data.user?.sub || 'N/A';
+        document.getElementById('hop1-email').textContent = h1.email || data.user?.email || 'N/A';
+        document.getElementById('hop1-roles').textContent = (h1.roles || data.user?.roles || []).join(', ');
+        document.getElementById('hop1-scopes').textContent = h1.scope || (currentUser?.scopes || []).join(', ');
+        document.getElementById('hop1-iss').textContent = h1.issuer || 'https://keycloak.internal/realms/azure-wif-realm';
+        document.getElementById('hop1-decoded').textContent = JSON.stringify(h1.decodedToken || { sub: h1.sub, email: h1.email, roles: h1.roles }, null, 2);
+        document.getElementById('hop1-raw').textContent = h1.rawToken || currentToken || 'N/A';
 
+        // Hop 2: Agent Identity
+        const h2 = hop.hop2_agentIdentity || {};
+        document.getElementById('hop2-spiffeid').textContent = h2.spiffeId || data.agent?.spiffeId || 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa';
+        document.getElementById('hop2-audience').textContent = h2.audience || 'api://AzureADTokenExchange';
+        document.getElementById('hop2-method').textContent = h2.cryptographicAssertion || 'mTLS + SPIFFE SVID signed by SPIRE';
+        document.getElementById('hop2-plan').textContent = data.plan 
+          ? `Tool: ${data.plan.plannedTool} | Container: ${data.plan.arguments?.container} | Action: ${data.plan.arguments?.action}` 
+          : 'N/A';
+        document.getElementById('hop2-decoded').textContent = JSON.stringify(h2.decodedToken || {
+          sub: h2.spiffeId,
+          aud: h2.audience,
+          assertion: h2.cryptographicAssertion
+        }, null, 2);
+        document.getElementById('hop2-raw').textContent = h2.rawToken || 'N/A';
+
+        // Hop 3: RFC 8693 Delegated Token
+        const h3 = hop.hop3_rfc8693Token || {};
+        const cardHop3 = document.getElementById('card-hop3');
+        const hop3Status = document.getElementById('hop3-status');
+        const hop3ActBox = document.getElementById('hop3-act-box');
+
+        if (h3.status === 'BLOCKED_BY_ORCHESTRATOR_FGP') {
+          cardHop3.className = 'hop-card denied';
+          hop3Status.className = 'status-badge status-failed';
+          hop3Status.textContent = 'BLOCKED BY POLICY';
+          document.getElementById('hop3-sub').textContent = 'N/A';
+          document.getElementById('hop3-aud').textContent = 'N/A';
+          document.getElementById('hop3-scope').textContent = 'N/A';
+          document.getElementById('hop3-ttl').textContent = 'N/A';
+          document.getElementById('hop3-act').textContent = `Policy block: ${h3.reason}`;
+          document.getElementById('hop3-decoded').textContent = JSON.stringify({ error: 'Token exchange halted by Orchestrator FGP', reason: h3.reason }, null, 2);
+          document.getElementById('hop3-raw').textContent = 'N/A (Token not minted)';
+        } else {
+          const isTampered = isRogue || h3.signatureStatus === 'UNTRUSTED_ACTOR_REJECTED';
+          cardHop3.className = 'hop-card ' + (isTampered ? 'denied' : 'success');
+          hop3Status.className = 'status-badge ' + (isTampered ? 'status-failed' : 'status-success');
+          hop3Status.textContent = isTampered ? 'UNTRUSTED ACTOR' : 'RFC 8693 VALIDATED';
+
+          document.getElementById('hop3-sub').textContent = h3.sub || 'N/A';
+          document.getElementById('hop3-aud').textContent = h3.aud || 'N/A';
+          document.getElementById('hop3-scope').textContent = Array.isArray(h3.scope) ? h3.scope.join(' ') : (h3.scope || 'mcp:tool1');
+          document.getElementById('hop3-ttl').textContent = (h3.ttlSeconds || 300) + 's (Short-Lived Downscoped)';
+          
+          hop3ActBox.className = 'claim-act-box ' + (isTampered ? 'tampered' : '');
+          document.getElementById('hop3-act').textContent = JSON.stringify(h3.act || {
+            sub: 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa',
+            iss: 'https://spire.agent-system.svc.cluster.local',
+            client_id: 'orchestrator-workload-identity'
+          }, null, 2);
+
+          document.getElementById('hop3-decoded').textContent = JSON.stringify(h3.decodedToken || h3.fullTokenClaims || {}, null, 2);
+          document.getElementById('hop3-raw').textContent = h3.rawToken || 'N/A';
+        }
+
+        // Hop 4: JIT Storage Delegation
+        const h4 = hop.hop4_storageDelegation || {};
+        const cardHop4 = document.getElementById('card-hop4');
+        const hop4Status = document.getElementById('hop4-status');
+
+        if (h4.status === 'NOT_EVALUATED') {
+          cardHop4.className = 'hop-card warning';
+          hop4Status.className = 'status-badge status-neutral';
+          hop4Status.textContent = 'NOT MINTED';
+          document.getElementById('hop4-cred-type').textContent = 'N/A (Stopped at Hop 3)';
+          document.getElementById('hop4-ttl').textContent = 'N/A';
+          document.getElementById('hop4-resource').textContent = 'N/A';
+          document.getElementById('hop4-account').textContent = 'N/A';
+          document.getElementById('hop4-binding').textContent = 'N/A';
+          document.getElementById('hop4-decision').textContent = 'Not evaluated due to upstream policy denial';
+          document.getElementById('hop4-decoded').textContent = JSON.stringify({ error: 'Storage credential not minted due to upstream policy denial' }, null, 2);
+          document.getElementById('hop4-raw').textContent = 'N/A';
+        } else {
+          const decision = h4.cloudIamStatus || '';
+          const isAllowed = !isError && decision.includes('ALLOWED');
+          cardHop4.className = 'hop-card ' + (isAllowed ? 'success' : 'denied');
+          hop4Status.className = 'status-badge ' + (isAllowed ? 'status-success' : 'status-failed');
+          hop4Status.textContent = isAllowed ? 'STORAGE ALLOWED' : (data.mcpResponse?.cloudIAMDecision || 'DENIED');
+
+          document.getElementById('hop4-cred-type').textContent = h4.credentialType || 'OAuth 2.0 User-Delegation SAS (60s)';
+          document.getElementById('hop4-ttl').textContent = (h4.ttlSeconds || 60) + 's (Ephemeral JIT)';
+          document.getElementById('hop4-resource').textContent = h4.resource || (data.plan?.arguments ? `/${data.plan.arguments.container}/${data.plan.arguments.filename}` : 'N/A');
+          document.getElementById('hop4-account').textContent = h4.storageAccount || 'azwifstoragepocrt';
+          document.getElementById('hop4-binding').textContent = h4.chainBinding || 'SHA-256 bound to Hop 3 token';
+          document.getElementById('hop4-decision').innerHTML = isAllowed
+            ? '<span style="color: var(--success); font-weight: 600;">ALLOWED (HTTP 200 OK via Azure Storage Native RBAC)</span>'
+            : `<span style="color: var(--danger); font-weight: 600;">${decision}</span>`;
+
+          document.getElementById('hop4-decoded').textContent = JSON.stringify(h4.decodedToken || {}, null, 2);
+          document.getElementById('hop4-raw').textContent = h4.rawToken || 'N/A';
+        }
+
+        // Trace MCP Raw Output
         document.getElementById('trace-mcp').textContent = JSON.stringify(data.mcpResponse, null, 2);
 
+        // Global status indicator
         document.getElementById('status-indicator').innerHTML = isError
-          ? '<span class="status-badge status-failed">Policy Denied</span>'
-          : '<span class="status-badge status-success">Execution Complete</span>';
+          ? `<span class="status-badge status-failed">${data.mcpResponse?.cloudIAMDecision || 'Execution Denied'}</span>`
+          : '<span class="status-badge status-success">Completed (HTTP 200)</span>';
 
       } catch (err) {
         document.getElementById('status-indicator').innerHTML = `<span class="status-badge status-failed">Error: ${err.message}</span>`;
@@ -286,3 +515,4 @@
   </script>
 </body>
 </html>
+

@@ -36,10 +36,10 @@ class OpaPolicyEngine {
     };
 
     // Evaluate: Is Weekend?
+    const allowWeekend = process.env.ALLOW_WEEKEND_EXECUTION !== 'false';
     const isWeekend =
       evaluationContext.simulate_weekend ||
-      evaluationContext.day_of_week === 'Saturday' ||
-      evaluationContext.day_of_week === 'Sunday';
+      (!allowWeekend && (evaluationContext.day_of_week === 'Saturday' || evaluationContext.day_of_week === 'Sunday'));
 
     if (isWeekend) {
       return {

@@ -166,12 +166,12 @@ class DeclarativeEngine {
     }
 
     try {
-      console.log(`[MCP-STORAGE] Step 4 (Storage): Executing Pattern C User-Delegation SAS for container='${container}', file='${filename}'...`);
+      console.log(`[MCP-STORAGE] Step 4 (Storage): Executing JIT User-Delegation access for container='${container}', file='${filename}'...`);
       let operationResult;
       if (action === 'read') {
-        operationResult = await azureStorage.readBlob(container, filename);
+        operationResult = await azureStorage.readBlob(container, filename, authContext);
       } else if (action === 'write') {
-        operationResult = await azureStorage.writeBlob(container, filename, content || '');
+        operationResult = await azureStorage.writeBlob(container, filename, content || '', authContext);
       }
 
       const auditLog = {
@@ -210,14 +210,33 @@ class DeclarativeEngine {
         audit: auditLog
       };
     } catch (storageErr) {
+      const isCloudIamDenied = storageErr.statusCode === 403 || storageErr.message?.includes('403') || storageErr.message?.includes('AuthorizationPermissionMismatch');
+      const auditLog = {
+        timestamp: new Date().toISOString(),
+        principal: sub,
+        actingAgent: actSub,
+        requestedTool: toolName,
+        action,
+        container,
+        filename,
+        decision: isCloudIamDenied ? 'DENIED_BY_AZURE_STORAGE_IAM' : 'STORAGE_EXECUTION_ERROR',
+        error: storageErr.message
+      };
+
+      console.warn(`[MCP Storage] ❌ ${isCloudIamDenied ? 'CLOUD IAM REJECTION (403)' : 'ERROR'}: ${storageErr.message}`);
+
       return {
         isError: true,
+        cloudIAMDecision: isCloudIamDenied ? 'DENIED_BY_AZURE_STORAGE_IAM' : undefined,
         content: [
           {
             type: 'text',
-            text: `Azure Storage Execution Error: ${storageErr.message}`
+            text: isCloudIamDenied
+              ? `Azure Storage Cloud IAM Access Denied (HTTP 403): Principal '${sub}' lacks required Azure Storage RBAC role ('Storage Blob Data Reader') on container '${container}'. Operation was rejected natively by Azure Storage kernel.`
+              : `Azure Storage Execution Error: ${storageErr.message}`
           }
-        ]
+        ],
+        audit: auditLog
       };
     }
   }

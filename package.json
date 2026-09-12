@@ -8,7 +8,8 @@
     "test:mcp": "npm --prefix app/mcp-server test",
     "test:agent": "npm --prefix app/agent-orchestrator test",
     "test:frontend": "npm --prefix app/web-frontend test",
-    "demo": "./scripts/run-demo.sh"
+    "demo": "./scripts/run-demo.sh",
+    "start:ui": "node scripts/start-ui.js"
   },
   "keywords": [
     "spire",

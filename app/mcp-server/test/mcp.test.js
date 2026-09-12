@@ -9,18 +9,19 @@ const app = require('../src/index');
 
 const TEST_SECRET = 'demo-obo-token-secret-key-2026';
 
-function mintOboToken({ sub, actSub, scopes }) {
+function mintOboToken({ sub, actSub, scopes, roles }) {
   return jwtUtil.sign(
     {
       sub,
       email: sub,
+      roles: roles || (sub?.includes('alice') ? ['auditor', 'Storage Blob Data Reader'] : ['regular-user']),
       act: {
         sub: actSub || 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa'
       },
       scope: Array.isArray(scopes) ? scopes.join(' ') : scopes
     },
     TEST_SECRET,
-    { expiresInSeconds: 3600 }
+    { expiresInSeconds: 300 }
   );
 }
 
@@ -111,14 +112,15 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
     assert.ok(toolNames.includes('tool2'), 'Must include tool2');
   });
 
-  test('Regular User (Bob): Can execute tool1 to read and write app1 and app2', async () => {
+  test('Regular User (Bob): Tool-level RBAC passes (mcp:tool1), but Cloud IAM denies storage access (HTTP 403 / AuthorizationPermissionMismatch)', async () => {
     const bobToken = mintOboToken({
       sub: 'bob@example.com',
       actSub: 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa',
-      scopes: ['mcp:tool1']
+      scopes: ['mcp:tool1'],
+      roles: ['regular-user'] // Bob has NO storage RBAC role
     });
 
-    // 1. Read app1
+    // 1. Read app1 -> Fails at Layer 2 Cloud Native IAM
     const readRes = await rpcRequest(
       'tools/call',
       {
@@ -128,29 +130,10 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
       bobToken
     );
 
-    assert.strictEqual(readRes.result.isError, false);
-    assert.ok(readRes.result.content[0].text.includes('Q2-2026'));
-    assert.strictEqual(readRes.result.audit.principal, 'bob@example.com');
-    assert.strictEqual(readRes.result.audit.actingAgent, 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa');
-
-    // 2. Write app2
-    const writeRes = await rpcRequest(
-      'tools/call',
-      {
-        name: 'tool1',
-        arguments: {
-          container: 'app2',
-          action: 'write',
-          filename: 'bob-note.txt',
-          content: 'Bob wrote to app2 container'
-        }
-      },
-      bobToken
-    );
-
-    assert.strictEqual(writeRes.result.isError, false);
-    assert.strictEqual(writeRes.result.audit.action, 'write');
-    assert.strictEqual(writeRes.result.audit.container, 'app2');
+    assert.strictEqual(readRes.result.isError, true);
+    assert.strictEqual(readRes.result.cloudIAMDecision, 'DENIED_BY_AZURE_STORAGE_IAM');
+    assert.ok(readRes.result.content[0].text.includes('Azure Storage Cloud IAM Access Denied (HTTP 403)'));
+    assert.strictEqual(readRes.result.audit.decision, 'DENIED_BY_AZURE_STORAGE_IAM');
   });
 
   test('Regular User (Bob): Fails tool2 with native MCP Error (isError: true, lacks mcp:tool2)', async () => {
@@ -292,10 +275,11 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
     assert.strictEqual(res.result.audit.decision, 'DENIED_BY_FGP');
   });
 
-  test('Pattern C: Operation dynamically mints short-lived scoped SAS credential', async () => {
+  test('JIT User Delegation: Operation dynamically mints 60s JIT credential with SHA-256 chain fingerprint binding', async () => {
     const token = mintOboToken({
-      sub: 'bob@example.com',
-      scopes: ['mcp:tool1']
+      sub: 'alice@example.com',
+      scopes: ['mcp:tool1'],
+      roles: ['auditor', 'Storage Blob Data Reader']
     });
 
     const res = await rpcRequest(
@@ -309,14 +293,42 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
 
     assert.strictEqual(res.result.isError, false);
     const parsedData = JSON.parse(res.result.content[0].text);
-    assert.ok(parsedData.data.patternC, 'Response must include Pattern C scoped credential metadata');
-    assert.strictEqual(parsedData.data.patternC.credentialType, 'DYNAMIC_USER_DELEGATION_SAS');
-    assert.strictEqual(parsedData.data.patternC.permissions, 'r');
-    assert.strictEqual(parsedData.data.patternC.ttlSeconds, 60);
-    assert.ok(parsedData.data.patternC.sasToken.includes('sig='));
+    assert.ok(parsedData.data.delegationMeta, 'Response must include JIT delegation metadata');
+    assert.strictEqual(parsedData.data.delegationMeta.credentialType, 'JIT_USER_DELEGATION_CREDENTIAL');
+    assert.strictEqual(parsedData.data.delegationMeta.permissions, 'r');
+    assert.strictEqual(parsedData.data.delegationMeta.ttlSeconds, 60);
+    assert.ok(parsedData.data.delegationMeta.chainFingerprint);
+    assert.ok(parsedData.data.delegationMeta.correlationId);
   });
 
-  test('Azure WIF & Entra ID Protection: Validates Microsoft Entra token with app roles and delegated Keycloak user identity', async () => {
+  test('RFC 8693 Cryptographic Delegation Chain: Rejects tokens with untrusted or rogue actors', async () => {
+    const rogueToken = jwtUtil.sign(
+      {
+        sub: 'alice@example.com',
+        aud: 'api://d5850aa0-a667-41c3-8dd0-16f2dee4da25',
+        act: {
+          sub: 'untrusted-bad-actor-proxy'
+        },
+        scope: 'mcp:tool1'
+      },
+      TEST_SECRET,
+      { expiresInSeconds: 300 }
+    );
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'tool1',
+        arguments: { container: 'app1', action: 'read', filename: 'financial-report.json' }
+      },
+      rogueToken
+    );
+
+    assert.strictEqual(res.result.isError, true);
+    assert.ok(res.result.content[0].text.includes('RFC 8693 Cryptographic chain verification failed'));
+  });
+
+  test('Azure WIF & Entra ID Protection: Validates Microsoft Entra token with app roles and delegated user identity', async () => {
     const entraToken = jwtUtil.sign({
       iss: 'https://login.microsoftonline.com/81f26b58-159c-4879-80a0-bab30b5b4dd3/v2.0',
       tid: '81f26b58-159c-4879-80a0-bab30b5b4dd3',
@@ -324,12 +336,12 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
       sub: 'a23206e1-2dda-4854-aac7-0536d2da2c4c',
       appid: 'a23206e1-2dda-4854-aac7-0536d2da2c4c',
       roles: ['mcp:tool1']
-    }, TEST_SECRET, { expiresInSeconds: 600 });
+    }, TEST_SECRET, { expiresInSeconds: 300 });
 
     const delegatedUserHeader = JSON.stringify({
-      sub: 'bob@example.com',
-      email: 'bob@example.com',
-      roles: ['regular-user']
+      sub: 'alice@example.com',
+      email: 'alice@example.com',
+      roles: ['auditor', 'Storage Blob Data Reader']
     });
 
     const res = await rpcRequest(
@@ -343,7 +355,7 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
     );
 
     assert.strictEqual(res.result.isError, false);
-    assert.strictEqual(res.result.audit.principal, 'bob@example.com');
+    assert.strictEqual(res.result.audit.principal, 'alice@example.com');
     assert.strictEqual(res.result.audit.actingAgent, 'entra://a23206e1-2dda-4854-aac7-0536d2da2c4c');
     assert.strictEqual(res.result.audit.decision, 'ALLOWED');
   });

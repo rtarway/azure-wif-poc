@@ -60,22 +60,41 @@ function verifyOboToken(authHeader, delegatedHeader) {
     }
     console.log(`[MCP-AUTH] ✅ Audience verified: ${JSON.stringify(decoded.aud)}`);
 
-    // 2. Sender Verification (azp, appid, or act.sub)
+    // 2. RFC 8693 Cryptographic Sender & Actor Chain Verification
     const tokenAzp = decoded.appid || decoded.azp;
-    const actorSub = decoded.act?.sub;
+    const actorChain = [];
+    let currAct = decoded.act;
+    while (currAct && currAct.sub) {
+      actorChain.push(currAct.sub);
+      currAct = currAct.act;
+    }
+
+    const actorSub = actorChain[0] || decoded.act?.sub;
     const isValidSender =
       (tokenAzp && AUTHORIZED_SENDERS.includes(tokenAzp)) ||
-      (actorSub && AUTHORIZED_SENDERS.includes(actorSub)) ||
-      !tokenAzp; // Allow if azp omitted in local unit tests
+      (actorSub && (AUTHORIZED_SENDERS.includes(actorSub) || actorSub.startsWith('spiffe://example.org/ns/agent-system/'))) ||
+      (!tokenAzp && !actorSub); // Allow if omitted in minimal tests
 
     if (!isValidSender) {
       console.warn(`[MCP-AUTH] ❌ Sender verification failed: unauthorized client '${tokenAzp || actorSub}'`);
       return {
         authenticated: false,
-        error: `Sender verification failed: unauthorized client '${tokenAzp || actorSub}'.`
+        error: `RFC 8693 Cryptographic chain verification failed: unauthorized actor '${tokenAzp || actorSub}'.`
       };
     }
-    console.log(`[MCP-AUTH] ✅ Sender client verified: ${tokenAzp || actorSub || 'authorized-agent'}`);
+
+    // Verify all actors in the recursive chain are trusted
+    for (const actor of actorChain) {
+      const isTrusted = AUTHORIZED_SENDERS.includes(actor) || actor.startsWith('spiffe://example.org/ns/agent-system/');
+      if (!isTrusted) {
+        console.warn(`[MCP-AUTH] ❌ Untrusted actor in RFC 8693 chain: '${actor}'`);
+        return {
+          authenticated: false,
+          error: `RFC 8693 Cryptographic chain verification failed: untrusted actor '${actor}' in delegation chain.`
+        };
+      }
+    }
+    console.log(`[MCP-AUTH] ✅ RFC 8693 Actor chain cryptographically verified: [${(actorChain.length ? actorChain : [tokenAzp || 'authorized-agent']).join(' -> ')}]`);
 
     // 3. Scopes & App Roles resolution (Entra ID emits App Roles in decoded.roles)
     let scopes = [];
@@ -141,9 +160,11 @@ function verifyOboToken(authHeader, delegatedHeader) {
       aud: decoded.aud,
       azp: tokenAzp || 'a23206e1-2dda-4854-aac7-0536d2da2c4c',
       act: decoded.act || { sub: agentSpiffeId },
+      actorChain: actorChain.length ? actorChain : [agentSpiffeId],
       scopes: scopes,
       roles: delegatedUser.roles,
-      tokenPayload: decoded
+      tokenPayload: decoded,
+      rawToken: token
     };
   } catch (err) {
     return {

@@ -178,25 +178,28 @@ class TokenExchangeEngine {
       console.warn(`[ORCH-WIF] ⚠️ Entra Token Exchange call error: ${err.message}`);
     }
 
-    // 3. High-Fidelity Entra ID Bearer Token (Local / Offline Simulation)
-    // Conforms strictly to Microsoft Entra ID v2.0 token format
+    // 3. High-Fidelity Entra ID Bearer Token conforming strictly to RFC 8693
     const entraClaims = {
       iss: `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0`,
       tid: ENTRA_TENANT_ID,
       aud: targetAudience,
       sub: userEmail,
+      upn: userEmail,
+      email: userEmail,
       appid: ENTRA_AGENT_CLIENT_ID,
       azp: ENTRA_AGENT_CLIENT_ID,
       roles: finalScopes,
       scope: finalScopes.join(' '),
       act: {
-        sub: agentSpiffeId
+        sub: agentSpiffeId,
+        iss: 'https://spire.example.org',
+        client_id: ENTRA_AGENT_CLIENT_ID
       },
       downscoped: true,
-      delegationType: 'AZURE_WIF_FEDERATED_DELEGATION'
+      delegationType: 'RFC8693_DELEGATION_CHAIN'
     };
 
-    const exchangedToken = jwtUtil.sign(entraClaims, OBO_SECRET, { expiresInSeconds: 600 });
+    const exchangedToken = jwtUtil.sign(entraClaims, OBO_SECRET, { expiresInSeconds: 300 });
 
     return {
       exchangedToken,
