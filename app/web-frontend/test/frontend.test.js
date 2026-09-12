@@ -88,12 +88,13 @@ describe('Web Frontend Tests (Outside SPIRE)', () => {
     assert.strictEqual(res.body.authenticated, true);
     assert.strictEqual(res.body.user.username, 'alice');
     assert.ok(res.body.user.roles.includes('admin'));
-    assert.deepStrictEqual(res.body.user.scopes, ['mcp:tool1', 'mcp:tool2']);
+    assert.deepStrictEqual(res.body.user.scopes, ['mcp:tool1', 'mcp:tool2', 'Mail.Send']);
 
     const decoded = jwtUtil.decode(res.body.token);
     assert.strictEqual(decoded.sub, 'alice@rtarwaygmail.onmicrosoft.com');
     assert.ok(decoded.scope.includes('mcp:tool1'));
     assert.ok(decoded.scope.includes('mcp:tool2'));
+    assert.ok(decoded.scope.includes('Mail.Send'));
   });
 
   test('POST /api/login for Bob issues Regular User Token with only mcp:tool1', async () => {

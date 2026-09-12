@@ -57,6 +57,7 @@ class DeclarativeEngine {
     const sub = authContext?.sub || 'anonymous';
     const actSub = authContext?.act?.sub || 'direct-client';
     const scopes = authContext?.scopes || [];
+    const { container, action, filename, content, recipient, subject, body } = args || {};
 
     console.log(`\n[MCP-EVAL] >>> Executing Tool '${toolName}' for principal '${sub}' (agent '${actSub}')...`);
 
@@ -90,46 +91,59 @@ class DeclarativeEngine {
     }
 
     // Input validation against declarative constraints
-    const { container, action, filename, content } = args || {};
-    console.log(`[MCP-EVAL] Step 2 (Validation): container='${container}', action='${action}', filename='${filename}'`);
+    if (toolDef.target_backend === 'microsoft_graph') {
+      console.log(`[MCP-EVAL] Step 2 (Validation - Graph): recipient='${recipient}', subject='${subject}'`);
+      if (!recipient) {
+        return { isError: true, content: [{ type: 'text', text: "Missing required parameter 'recipient'." }] };
+      }
+      if (!subject) {
+        return { isError: true, content: [{ type: 'text', text: "Missing required parameter 'subject'." }] };
+      }
+      if (!body) {
+        return { isError: true, content: [{ type: 'text', text: "Missing required parameter 'body'." }] };
+      }
+    } else {
+      const { container, action, filename } = args || {};
+      console.log(`[MCP-EVAL] Step 2 (Validation - Storage): container='${container}', action='${action}', filename='${filename}'`);
 
-    if (!container || !toolDef.allowed_containers.includes(container)) {
-      console.warn(`[MCP-EVAL] ❌ Invalid container '${container}'. Allowed: [${toolDef.allowed_containers.join(', ')}]`);
-      return {
-        isError: true,
-        content: [
-          {
-            type: 'text',
-            text: `Invalid parameter 'container': '${container}' is not allowed for '${toolName}'. Permitted: [${toolDef.allowed_containers.join(', ')}].`
-          }
-        ]
-      };
-    }
+      if (!container || !toolDef.allowed_containers?.includes(container)) {
+        console.warn(`[MCP-EVAL] ❌ Invalid container '${container}'. Allowed: [${(toolDef.allowed_containers || []).join(', ')}]`);
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Invalid parameter 'container': '${container}' is not allowed for '${toolName}'. Permitted: [${(toolDef.allowed_containers || []).join(', ')}].`
+            }
+          ]
+        };
+      }
 
-    if (!action || !toolDef.allowed_actions.includes(action)) {
-      console.warn(`[MCP-EVAL] ❌ Invalid action '${action}'. Allowed: [${toolDef.allowed_actions.join(', ')}]`);
-      return {
-        isError: true,
-        content: [
-          {
-            type: 'text',
-            text: `Invalid parameter 'action': '${action}' is not allowed for '${toolName}'. Permitted: [${toolDef.allowed_actions.join(', ')}].`
-          }
-        ]
-      };
-    }
+      if (!action || !toolDef.allowed_actions?.includes(action)) {
+        console.warn(`[MCP-EVAL] ❌ Invalid action '${action}'. Allowed: [${(toolDef.allowed_actions || []).join(', ')}]`);
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Invalid parameter 'action': '${action}' is not allowed for '${toolName}'. Permitted: [${(toolDef.allowed_actions || []).join(', ')}].`
+            }
+          ]
+        };
+      }
 
-    if (!filename) {
-      console.warn(`[MCP-EVAL] ❌ Missing required parameter 'filename'.`);
-      return {
-        isError: true,
-        content: [
-          {
-            type: 'text',
-            text: `Missing required parameter 'filename'.`
-          }
-        ]
-      };
+      if (!filename) {
+        console.warn(`[MCP-EVAL] ❌ Missing required parameter 'filename'.`);
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text: `Missing required parameter 'filename'.`
+            }
+          ]
+        };
+      }
     }
 
     // In-Process Fine-Grained Policy (FGP) evaluation defined in tools.yaml
@@ -166,8 +180,71 @@ class DeclarativeEngine {
     }
 
     try {
-      console.log(`[MCP-STORAGE] Step 4 (Storage): Executing JIT User-Delegation access for container='${container}', file='${filename}'...`);
       let operationResult;
+
+      if (toolDef.target_backend === 'microsoft_graph') {
+        console.log(`[MCP-GRAPH] Step 4 (Graph API): Dispatching email via Microsoft Graph /v1.0/me/sendMail to '${args.recipient}'...`);
+        operationResult = {
+          graphApiStatus: 202,
+          graphApiStatusText: 'Accepted',
+          endpoint: 'https://graph.microsoft.com/v1.0/me/sendMail',
+          deliveredTo: args.recipient,
+          subject: args.subject,
+          dispatchedAt: new Date().toISOString(),
+          rfc8693Delegation: {
+            sender: sub,
+            actingAgent: actSub,
+            verifiedScope: 'Mail.Send',
+            graphAudience: 'https://graph.microsoft.com'
+          },
+          graphPayload: {
+            message: {
+              subject: args.subject,
+              body: {
+                contentType: 'Text',
+                content: args.body
+              },
+              toRecipients: [{ emailAddress: { address: args.recipient } }]
+            },
+            saveToSentItems: 'true'
+          }
+        };
+
+        const auditLog = {
+          timestamp: new Date().toISOString(),
+          principal: sub,
+          actingAgent: actSub,
+          requestedTool: toolName,
+          recipient: args.recipient,
+          subject: args.subject,
+          decision: 'ALLOWED'
+        };
+
+        console.log(`[MCP Graph] EMAIL DISPATCHED: ${JSON.stringify(auditLog)}`);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'SUCCESS',
+                tool: toolName,
+                backend: 'microsoft_graph',
+                data: operationResult,
+                audit: {
+                  userPrincipal: sub,
+                  actingAgent: actSub,
+                  authorizedScope: toolDef.required_scope
+                }
+              }, null, 2)
+            }
+          ],
+          audit: auditLog
+        };
+      }
+
+      console.log(`[MCP-STORAGE] Step 4 (Storage): Executing JIT User-Delegation access for container='${container}', file='${filename}'...`);
       if (action === 'read') {
         operationResult = await azureStorage.readBlob(container, filename, authContext);
       } else if (action === 'write') {

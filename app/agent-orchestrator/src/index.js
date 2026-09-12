@@ -198,6 +198,292 @@ app.post('/api/agent/chat', async (req, res) => {
     });
   }
 
+  // 4b. Multi-Hop Autonomous Pipeline Execution Loop
+  if (plan.planType === 'MULTI_STEP_PIPELINE') {
+    const pipelineSteps = [];
+    let halted = false;
+    let finalError = null;
+
+    // --- Step 1: Read App1 Financial Report ---
+    const step1 = plan.steps[0];
+    const entraAudience = process.env.ENTRA_AUDIENCE || 'api://d5850aa0-a667-41c3-8dd0-16f2dee4da25';
+    const step1Exchange = await tokenExchange.exchangeToken({
+      userToken,
+      agentSvid,
+      targetAudience: entraAudience,
+      requestedTool: step1.tool
+    });
+    const step1CorrelationId = 'chain-step1-' + (userClaims.email || userClaims.sub || 'user').replace(/[^a-zA-Z0-9]/g, '-') + '-' + crypto.randomUUID().substring(0, 8);
+    const step1McpRes = await callMcpServer(
+      MCP_SERVER_URL,
+      step1.tool,
+      step1.arguments,
+      step1Exchange.exchangedToken,
+      step1Exchange.delegatedUser,
+      step1CorrelationId
+    );
+
+    pipelineSteps.push({
+      stepNumber: 1,
+      name: step1.name,
+      tool: step1.tool,
+      targetResource: `/${step1.arguments.container}/${step1.arguments.filename}`,
+      token: step1Exchange.exchangedToken,
+      decodedToken: decodeTokenComplete(step1Exchange.exchangedToken),
+      mcpResponse: step1McpRes,
+      status: step1McpRes.isError ? (step1McpRes.cloudIAMDecision || 'FAILED') : 'SUCCESS'
+    });
+
+    if (step1McpRes.isError) {
+      halted = true;
+      finalError = step1McpRes;
+    }
+
+    let step2McpRes = null;
+    let step2Exchange = null;
+    let step3Redaction = null;
+    let step4McpRes = null;
+    let step4Exchange = null;
+
+    // --- Step 2: Read App2 Customer Metrics (if Step 1 succeeded) ---
+    if (!halted) {
+      const step2 = plan.steps[1];
+      step2Exchange = await tokenExchange.exchangeToken({
+        userToken,
+        agentSvid,
+        targetAudience: entraAudience,
+        requestedTool: step2.tool
+      });
+      const step2CorrelationId = 'chain-step2-' + (userClaims.email || userClaims.sub || 'user').replace(/[^a-zA-Z0-9]/g, '-') + '-' + crypto.randomUUID().substring(0, 8);
+      step2McpRes = await callMcpServer(
+        MCP_SERVER_URL,
+        step2.tool,
+        step2.arguments,
+        step2Exchange.exchangedToken,
+        step2Exchange.delegatedUser,
+        step2CorrelationId
+      );
+
+      pipelineSteps.push({
+        stepNumber: 2,
+        name: step2.name,
+        tool: step2.tool,
+        targetResource: `/${step2.arguments.container}/${step2.arguments.filename}`,
+        token: step2Exchange.exchangedToken,
+        decodedToken: decodeTokenComplete(step2Exchange.exchangedToken),
+        mcpResponse: step2McpRes,
+        status: step2McpRes.isError ? (step2McpRes.cloudIAMDecision || 'FAILED') : 'SUCCESS'
+      });
+
+      if (step2McpRes.isError) {
+        halted = true;
+        finalError = step2McpRes;
+      }
+    }
+
+    // --- Step 3: LLM Redaction & Executive Synthesis ---
+    if (!halted) {
+      let app1RawData = step1McpRes?.content?.[0]?.text || '';
+      let app2RawData = step2McpRes?.content?.[0]?.text || '';
+      try { const p1 = JSON.parse(app1RawData); if (p1.data?.content) app1RawData = p1.data.content; } catch {}
+      try { const p2 = JSON.parse(app2RawData); if (p2.data?.content) app2RawData = p2.data.content; } catch {}
+
+      step3Redaction = llmSimulator.redactAndSynthesize(app1RawData, app2RawData, userClaims);
+      pipelineSteps.push({
+        stepNumber: 3,
+        name: 'LLM Redaction & Executive Synthesis',
+        tool: 'llm_redaction_engine',
+        status: 'SUCCESS',
+        redactionDetails: {
+          rawCombined: step3Redaction.raw,
+          redactedSummary: step3Redaction.redactedReport,
+          redactionsCount: step3Redaction.redactionsPerformed.length,
+          redactionsList: step3Redaction.redactionsPerformed
+        }
+      });
+    }
+
+    // --- Step 4: Microsoft Graph Email Dispatch ---
+    if (!halted) {
+      const step4 = plan.steps[3];
+      const targetRecipient = plan.targetRecipient || 'rtarway@gmail.com';
+
+      // Fine-Grained Policy: recipient must strictly be rtarway@gmail.com
+      if (targetRecipient !== 'rtarway@gmail.com') {
+        const fgpDenial = {
+          isError: true,
+          content: [{ type: 'text', text: `Fine-Grained Policy Denial: Email recipient '${targetRecipient}' is prohibited. Only rtarway@gmail.com is authorized.` }],
+          audit: {
+            principal: userClaims.email || userClaims.sub,
+            actingAgent: agentSvid.spiffeId,
+            requestedRecipient: targetRecipient,
+            decision: 'DENIED_BY_FGP'
+          }
+        };
+        pipelineSteps.push({
+          stepNumber: 4,
+          name: step4.name,
+          tool: step4.tool,
+          status: 'DENIED_BY_FGP',
+          mcpResponse: fgpDenial
+        });
+        halted = true;
+        finalError = fgpDenial;
+      } else {
+        // RFC 8693 Token Exchange for Microsoft Graph (Mail.Send)
+        step4Exchange = await tokenExchange.exchangeToken({
+          userToken,
+          agentSvid,
+          targetAudience: 'https://graph.microsoft.com',
+          requestedTool: 'send_email_graph'
+        });
+
+        // Verify caller has Mail.Send permission
+        const hasMailSend = (step4Exchange.claims.roles || []).includes('Mail.Send') ||
+          (userClaims.roles || []).includes('admin') ||
+          ((userClaims.scope || '').includes('Mail.Send'));
+
+        if (!hasMailSend) {
+          const authDenial = {
+            isError: true,
+            content: [{ type: 'text', text: `MCP Authorization Denied: Principal '${userClaims.sub}' lacks required Microsoft Graph scope 'Mail.Send' to dispatch emails.` }],
+            audit: {
+              principal: userClaims.sub,
+              actingAgent: agentSvid.spiffeId,
+              requestedTool: 'send_email_graph',
+              requiredScope: 'Mail.Send',
+              decision: 'DENIED_BY_POLICY'
+            }
+          };
+          pipelineSteps.push({
+            stepNumber: 4,
+            name: step4.name,
+            tool: step4.tool,
+            status: 'DENIED_BY_POLICY',
+            token: step4Exchange.exchangedToken,
+            decodedToken: decodeTokenComplete(step4Exchange.exchangedToken),
+            mcpResponse: authDenial
+          });
+          halted = true;
+          finalError = authDenial;
+        } else {
+          const step4CorrelationId = 'chain-step4-' + (userClaims.email || userClaims.sub || 'user').replace(/[^a-zA-Z0-9]/g, '-') + '-' + crypto.randomUUID().substring(0, 8);
+          step4McpRes = await callMcpServer(
+            MCP_SERVER_URL,
+            step4.tool,
+            {
+              recipient: targetRecipient,
+              subject: step4.arguments.subject,
+              body: step3Redaction.redactedReport
+            },
+            step4Exchange.exchangedToken,
+            step4Exchange.delegatedUser,
+            step4CorrelationId
+          );
+
+          pipelineSteps.push({
+            stepNumber: 4,
+            name: step4.name,
+            tool: step4.tool,
+            recipient: targetRecipient,
+            token: step4Exchange.exchangedToken,
+            decodedToken: decodeTokenComplete(step4Exchange.exchangedToken),
+            mcpResponse: step4McpRes,
+            status: step4McpRes.isError ? 'FAILED' : 'SUCCESS'
+          });
+
+          if (step4McpRes.isError) {
+            halted = true;
+            finalError = step4McpRes;
+          }
+        }
+      }
+    }
+
+    const decodedUser = userToken ? jwtUtil.decode(userToken) : null;
+    const finalHopToHop = {
+      isMultiHop: true,
+      hop1_userToken: {
+        name: 'Hop 1: Human User Keycloak / Entra Token (Subject)',
+        tokenType: 'JWT / OIDC Bearer (User Authentication)',
+        sub: userClaims.sub,
+        email: userClaims.email,
+        roles: userClaims.roles,
+        scope: decodedUser?.scope || (userClaims.roles?.includes('admin') ? 'mcp:tool1 mcp:tool2 Mail.Send' : 'mcp:tool1'),
+        issuer: decodedUser?.iss || 'https://keycloak.internal/realms/azure-wif-realm',
+        rawToken: userToken,
+        decodedToken: decodeTokenComplete(userToken)
+      },
+      hop2_agentIdentity: {
+        name: 'Hop 2: Agent Workload Identity (SPIRE SVID Assertion)',
+        tokenType: 'X.509 / JWT-SVID (RFC 8693 Actor Identity)',
+        spiffeId: agentSvid.spiffeId,
+        workloadVerified: true,
+        audience: 'api://AzureADTokenExchange',
+        cryptographicAssertion: 'mTLS + SPIFFE SVID signed by SPIRE Workload API',
+        rawToken: agentSvid.token,
+        decodedToken: decodeTokenComplete(agentSvid.token)
+      },
+      hop3_step1App1: pipelineSteps[0] || null,
+      hop4_step2App2: pipelineSteps[1] || null,
+      hop5_step3Redaction: pipelineSteps[2] || null,
+      hop6_step4GraphEmail: pipelineSteps[3] || null,
+      hop3_rfc8693Token: {
+        name: 'Hop 3: RFC 8693 Downscoped Delegated Token (Step 1 -> MCP Server)',
+        tokenType: 'RFC 8693 Delegated Access Token',
+        sub: step1Exchange.claims.sub,
+        aud: step1Exchange.claims.aud,
+        scope: step1Exchange.claims.roles || step1Exchange.claims.scope,
+        ttlSeconds: 300,
+        act: step1Exchange.claims.act,
+        delegationType: 'RFC8693_TOKEN_EXCHANGE',
+        signatureStatus: 'VALID_CRYPTOGRAPHIC_CHAIN',
+        rawToken: step1Exchange.exchangedToken,
+        decodedToken: decodeTokenComplete(step1Exchange.exchangedToken),
+        fullTokenClaims: step1Exchange.claims
+      },
+      hop4_storageDelegation: {
+        name: 'Hop 4: JIT Storage / Graph Execution Result',
+        credentialType: halted ? 'Cloud IAM / Policy Denial' : 'Multi-Hop JIT & Graph Dispatch',
+        ttlSeconds: 60,
+        resource: '/app1 & /app2 -> https://graph.microsoft.com',
+        storageAccount: 'azwifstoragepocrt',
+        cloudIamStatus: halted ? (finalError?.cloudIAMDecision || 'DENIED_BY_POLICY') : 'ALLOWED (HTTP 200 & HTTP 202)',
+        rawToken: 'Multi-Hop Pipeline Executed',
+        decodedToken: {
+          pipelineCompleted: !halted,
+          stepsCompleted: pipelineSteps.length,
+          lastError: finalError ? (finalError.cloudIAMDecision || finalError.content?.[0]?.text) : null
+        }
+      }
+    };
+
+    return res.json({
+      correlationId: 'chain-multihop-' + crypto.randomUUID().substring(0, 8),
+      prompt,
+      user: userClaims,
+      agent: {
+        spiffeId: agentSvid.spiffeId,
+        workloadVerified: true
+      },
+      plan,
+      multiHopExecution: {
+        completed: !halted,
+        totalSteps: 4,
+        executedSteps: pipelineSteps.length,
+        steps: pipelineSteps,
+        redactionSummary: step3Redaction ? {
+          redactionsPerformed: step3Redaction.redactionsPerformed,
+          executiveSummary: step3Redaction.redactedReport
+        } : null,
+        finalStatus: halted ? 'FAILED_POLICY_CHECK' : 'COMPLETED_SUCCESSFULLY'
+      },
+      hopToHop: finalHopToHop,
+      mcpResponse: halted ? finalError : (step4McpRes || { isError: false, content: [{ type: 'text', text: 'Multi-hop autonomous pipeline finished successfully.' }] }),
+      status: halted ? 'FAILED_POLICY_CHECK' : 'COMPLETED_SUCCESSFULLY'
+    });
+  }
+
   // 5. Azure Workload Identity Federation (WIF) Token Exchange with Scope Downscoping
   const entraAudience = process.env.ENTRA_AUDIENCE || 'api://d5850aa0-a667-41c3-8dd0-16f2dee4da25';
   const exchangeResult = await tokenExchange.exchangeToken({

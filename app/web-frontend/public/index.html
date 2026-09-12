@@ -165,6 +165,10 @@
               <div>🛡️ <b>Scenario E (Fine-Grained Policy)</b>: Overwrite compliance.txt in app1</div>
               <div class="desc">Target: <code>compliance.txt</code> &bull; <b style="color:var(--danger)">Blocked by Declarative tools.yaml FGP immutability</b></div>
             </button>
+            <button class="quick-btn" style="border-left: 4px solid var(--purple); background: rgba(168, 85, 247, 0.08);" onclick="setPrompt('Read app1 financial report and app2 metrics, redact sensitive info, and email summary via Microsoft Graph to rtarway@gmail.com')">
+              <div>🔄 <b>Scenario F (Multi-Hop Autonomous Pipeline)</b>: Read app1 + app2, redact, and email via Microsoft Graph</div>
+              <div class="desc">App1 (Reader) ➔ App2 (Metrics) ➔ LLM Redaction (PII/Salary) ➔ Graph API to <code>rtarway@gmail.com</code> &bull; <b style="color:var(--primary)">Allowed for Alice</b> &bull; <b style="color:var(--danger)">Denied for Bob (Cloud IAM / Mail.Send)</b></div>
+            </button>
           </div>
 
           <label style="font-size: 12px; color: var(--text-muted);">Custom User Prompt:</label>
@@ -181,6 +185,59 @@
           </h2>
 
           <div id="results-container" style="display: none;">
+            <!-- Multi-Hop Autonomous Pipeline Execution Tracker -->
+            <div id="multihop-tracker" style="display: none; background: rgba(168, 85, 247, 0.05); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 8px; padding: 16px; margin-bottom: 18px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid rgba(168, 85, 247, 0.2); padding-bottom: 8px;">
+                <h3 style="font-size: 14px; color: var(--purple); display: flex; align-items: center; gap: 8px;">
+                  🔄 Multi-Hop Autonomous Agentic Pipeline Execution
+                </h3>
+                <span id="multihop-badge" class="status-badge"></span>
+              </div>
+
+              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;" id="multihop-steps-grid">
+                <!-- Step 1 Card -->
+                <div class="hop-card" id="mh-step1-card" style="padding: 10px;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">STEP 1: APP1 QUERY</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--text);" id="mh-step1-title">Tool1 (app1)</div>
+                  <div style="font-size: 10px; margin-top: 4px;" id="mh-step1-status"></div>
+                </div>
+
+                <!-- Step 2 Card -->
+                <div class="hop-card" id="mh-step2-card" style="padding: 10px;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">STEP 2: APP2 QUERY</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--text);" id="mh-step2-title">Tool1 (app2)</div>
+                  <div style="font-size: 10px; margin-top: 4px;" id="mh-step2-status"></div>
+                </div>
+
+                <!-- Step 3 Card -->
+                <div class="hop-card" id="mh-step3-card" style="padding: 10px;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">STEP 3: REDACTION</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--text);" id="mh-step3-title">LLM Synthesis</div>
+                  <div style="font-size: 10px; margin-top: 4px;" id="mh-step3-status"></div>
+                </div>
+
+                <!-- Step 4 Card -->
+                <div class="hop-card" id="mh-step4-card" style="padding: 10px;">
+                  <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">STEP 4: GRAPH EMAIL</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--text);" id="mh-step4-title">send_email_graph</div>
+                  <div style="font-size: 10px; margin-top: 4px;" id="mh-step4-status"></div>
+                </div>
+              </div>
+
+              <!-- Collapsible Redaction & Synthesis Inspector -->
+              <details id="multihop-redaction-details" style="background: var(--card-sub-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 10px;" open>
+                <summary style="cursor: pointer; font-size: 12px; font-weight: 600; color: var(--purple); outline: none;">
+                  🛡️ LLM Sensitive Data Redaction & Executive Report Inspector
+                </summary>
+                <div style="margin-top: 8px;">
+                  <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Redactions Enforced by LLM Engine:</div>
+                  <div id="mh-redactions-list" style="font-size: 11px; color: var(--warning); margin-bottom: 8px;"></div>
+                  <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Sanitized Email Body Sent via Microsoft Graph (to rtarway@gmail.com):</div>
+                  <pre id="mh-sanitized-body" style="font-size: 11px; color: #38bdf8; max-height: 180px; overflow-y: auto;"></pre>
+                </div>
+              </details>
+            </div>
+
             <div class="pipeline-container">
               <!-- Hop 1: Human User -->
               <div class="hop-card info" id="card-hop1">
@@ -395,6 +452,77 @@
         const hop = data.hopToHop || {};
         const isError = data.mcpResponse?.isError;
         const isRogue = prompt.toLowerCase().includes('rogue actor') || prompt.toLowerCase().includes('tamper');
+
+        // Render Multi-Hop Pipeline Execution Tracker if active
+        const mh = data.multiHopExecution;
+        const mhTracker = document.getElementById('multihop-tracker');
+        if (mh) {
+          mhTracker.style.display = 'block';
+          const badge = document.getElementById('multihop-badge');
+          badge.className = 'status-badge ' + (mh.completed ? 'status-success' : 'status-failed');
+          badge.textContent = mh.completed ? 'ALL 4 STEPS COMPLETED (HTTP 200 + 202)' : 'HALTED AT STEP ' + mh.executedSteps;
+
+          // Step 1
+          const s1 = mh.steps[0] || {};
+          const s1Card = document.getElementById('mh-step1-card');
+          const s1Ok = s1.status === 'SUCCESS';
+          s1Card.className = 'hop-card ' + (s1Ok ? 'success' : 'denied');
+          document.getElementById('mh-step1-status').innerHTML = s1Ok
+            ? '<span style="color: var(--success); font-weight: bold;">✅ HTTP 200 OK (app1)</span>'
+            : `<span style="color: var(--danger); font-weight: bold;">❌ ${s1.status}</span>`;
+
+          // Step 2
+          const s2 = mh.steps[1] || {};
+          const s2Card = document.getElementById('mh-step2-card');
+          if (mh.executedSteps >= 2) {
+            const s2Ok = s2.status === 'SUCCESS';
+            s2Card.className = 'hop-card ' + (s2Ok ? 'success' : 'denied');
+            document.getElementById('mh-step2-status').innerHTML = s2Ok
+              ? '<span style="color: var(--success); font-weight: bold;">✅ HTTP 200 OK (app2)</span>'
+              : `<span style="color: var(--danger); font-weight: bold;">❌ ${s2.status}</span>`;
+          } else {
+            s2Card.className = 'hop-card';
+            document.getElementById('mh-step2-status').innerHTML = '<span style="color: var(--text-muted);">⏸️ SKIPPED</span>';
+          }
+
+          // Step 3
+          const s3 = mh.steps[2] || {};
+          const s3Card = document.getElementById('mh-step3-card');
+          if (mh.executedSteps >= 3) {
+            s3Card.className = 'hop-card success';
+            document.getElementById('mh-step3-status').innerHTML = `<span style="color: var(--success); font-weight: bold;">✅ ${s3.redactionDetails?.redactionsCount || 4} FIELDS REDACTED</span>`;
+          } else {
+            s3Card.className = 'hop-card';
+            document.getElementById('mh-step3-status').innerHTML = '<span style="color: var(--text-muted);">⏸️ SKIPPED</span>';
+          }
+
+          // Step 4
+          const s4 = mh.steps[3] || {};
+          const s4Card = document.getElementById('mh-step4-card');
+          if (mh.executedSteps >= 4) {
+            const s4Ok = s4.status === 'SUCCESS';
+            s4Card.className = 'hop-card ' + (s4Ok ? 'success' : 'denied');
+            document.getElementById('mh-step4-status').innerHTML = s4Ok
+              ? '<span style="color: var(--success); font-weight: bold;">✅ HTTP 202 ACCEPTED</span>'
+              : `<span style="color: var(--danger); font-weight: bold;">❌ ${s4.status}</span>`;
+          } else {
+            s4Card.className = 'hop-card';
+            document.getElementById('mh-step4-status').innerHTML = '<span style="color: var(--text-muted);">⏸️ SKIPPED</span>';
+          }
+
+          // Redaction report details
+          const redactionsList = document.getElementById('mh-redactions-list');
+          const sanitizedBody = document.getElementById('mh-sanitized-body');
+          if (mh.redactionSummary) {
+            document.getElementById('multihop-redaction-details').style.display = 'block';
+            redactionsList.innerHTML = mh.redactionSummary.redactionsPerformed.map(r => `<div>&bull; ${r}</div>`).join('');
+            sanitizedBody.textContent = mh.redactionSummary.executiveSummary;
+          } else {
+            document.getElementById('multihop-redaction-details').style.display = 'none';
+          }
+        } else {
+          mhTracker.style.display = 'none';
+        }
 
         // Hop 1: Human User
         const h1 = hop.hop1_userToken || {};

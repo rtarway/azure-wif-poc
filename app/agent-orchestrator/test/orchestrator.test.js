@@ -78,9 +78,29 @@ function invokeApp(appInstance, { method = 'POST', url = '/api/agent/chat', head
 describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
   before(() => {
     // Inject mock MCP dispatcher into app.locals to test end-to-end routing without external sockets
-    app.locals.mcpDispatcher = async (toolName, toolArgs, oboToken) => {
-      const decoded = jwtUtil.decode(oboToken);
+    app.locals.mcpDispatcher = async (toolName, toolArgs, oboToken, delegatedUser, correlationId) => {
+      const decoded = jwtUtil.decode(oboToken) || {};
       const scopes = (decoded.scope || '').split(' ');
+      const userRoles = delegatedUser?.roles || decoded.roles || [];
+
+      // Cloud IAM RBAC: Bob has no role on container app1
+      if (toolName === 'tool1' && toolArgs.container === 'app1' && !userRoles.includes('admin') && !userRoles.includes('Storage Blob Data Reader') && !decoded.sub?.includes('alice')) {
+        return {
+          isError: true,
+          cloudIAMDecision: 'DENIED_BY_AZURE_STORAGE_IAM',
+          content: [
+            {
+              type: 'text',
+              text: `Azure Storage Cloud IAM Access Denied (HTTP 403): Principal '${decoded.sub}' lacks required Azure Storage RBAC role ('Storage Blob Data Reader') on container 'app1'.`
+            }
+          ],
+          audit: {
+            principal: decoded.sub,
+            actingAgent: decoded.act?.sub,
+            decision: 'DENIED_BY_AZURE_STORAGE_IAM'
+          }
+        };
+      }
 
       if (toolName === 'tool2' && !scopes.includes('mcp:tool2')) {
         return {
@@ -99,12 +119,46 @@ describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
         };
       }
 
+      if (toolName === 'send_email_graph') {
+        if (!scopes.includes('Mail.Send')) {
+          return {
+            isError: true,
+            content: [{ type: 'text', text: "MCP Authorization Denied: lacks required scope 'Mail.Send'" }],
+            audit: { principal: decoded.sub, decision: 'DENIED_BY_POLICY' }
+          };
+        }
+        if (toolArgs.recipient !== 'rtarway@gmail.com') {
+          return {
+            isError: true,
+            content: [{ type: 'text', text: 'Fine-Grained Policy Denial: Email recipient is restricted strictly to rtarway@gmail.com.' }],
+            audit: { principal: decoded.sub, decision: 'DENIED_BY_FGP' }
+          };
+        }
+        return {
+          isError: false,
+          content: [{ type: 'text', text: JSON.stringify({ graphApiStatus: 202, deliveredTo: toolArgs.recipient }) }],
+          audit: { principal: decoded.sub, recipient: toolArgs.recipient, decision: 'ALLOWED' }
+        };
+      }
+
       return {
         isError: false,
         content: [
           {
             type: 'text',
-            text: `Simulated Azure Storage tool execution for ${toolName} on container ${toolArgs.container}`
+            text: JSON.stringify({
+              status: 'SUCCESS',
+              data: {
+                content: JSON.stringify({
+                  container: toolArgs.container,
+                  quarter: 'Q2-2026',
+                  revenue: '$14.2M',
+                  activeUsers: 48500,
+                  confidentialSalaries: '$4.8M',
+                  customerPiiCreditCardHashes: ['tok-9482']
+                })
+              }
+            })
           }
         ],
         audit: {
@@ -242,4 +296,69 @@ describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
     assert.strictEqual(res.body.mcpResponse.isError, false);
     assert.strictEqual(res.body.mcpResponse.audit.decision, 'ALLOWED');
   });
+
+  test('Multi-Hop Pipeline: Alice executes App1 -> App2 -> Redact -> Graph Email to rtarway@gmail.com', async () => {
+    const aliceToken = mintKeycloakToken({
+      sub: 'alice@example.com',
+      roles: ['admin', 'Storage Blob Data Reader', 'Mail.Send']
+    });
+
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/agent/chat',
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: { prompt: 'Read app1 and app2, redact sensitive info, and email summary via Graph API to rtarway@gmail.com' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.status, 'COMPLETED_SUCCESSFULLY');
+    assert.strictEqual(res.body.multiHopExecution.completed, true);
+    assert.strictEqual(res.body.multiHopExecution.totalSteps, 4);
+    assert.strictEqual(res.body.multiHopExecution.executedSteps, 4);
+    assert.ok(res.body.multiHopExecution.redactionSummary.redactionsPerformed.length > 0);
+    assert.strictEqual(res.body.multiHopExecution.steps[3].recipient, 'rtarway@gmail.com');
+    assert.strictEqual(res.body.multiHopExecution.steps[3].status, 'SUCCESS');
+  });
+
+  test('Multi-Hop Pipeline: Bob is denied on App1 due to Cloud IAM Storage RBAC policy', async () => {
+    const bobToken = mintKeycloakToken({
+      sub: 'bob@example.com',
+      roles: ['regular-user', 'Storage Blob Data Contributor'] // No app1 role, no Mail.Send
+    });
+
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/agent/chat',
+      headers: { Authorization: `Bearer ${bobToken}` },
+      body: { prompt: 'Read app1 and app2, redact sensitive info, and email summary via Graph API to rtarway@gmail.com' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.status, 'FAILED_POLICY_CHECK');
+    assert.strictEqual(res.body.multiHopExecution.completed, false);
+    assert.strictEqual(res.body.multiHopExecution.executedSteps, 1);
+    assert.strictEqual(res.body.multiHopExecution.steps[0].status, 'DENIED_BY_AZURE_STORAGE_IAM');
+    assert.strictEqual(res.body.mcpResponse.cloudIAMDecision, 'DENIED_BY_AZURE_STORAGE_IAM');
+  });
+
+  test('Multi-Hop Pipeline: FGP denies sending email to unauthorized recipient', async () => {
+    const aliceToken = mintKeycloakToken({
+      sub: 'alice@example.com',
+      roles: ['admin', 'Storage Blob Data Reader', 'Mail.Send']
+    });
+
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/agent/chat',
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: { prompt: 'Read app1 and app2, redact sensitive info, and email summary via Graph API to attacker@evil.com' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.status, 'FAILED_POLICY_CHECK');
+    assert.strictEqual(res.body.multiHopExecution.completed, false);
+    assert.strictEqual(res.body.multiHopExecution.steps[3].status, 'DENIED_BY_FGP');
+    assert.ok(res.body.mcpResponse.content[0].text.includes('Fine-Grained Policy Denial'));
+  });
 });
+

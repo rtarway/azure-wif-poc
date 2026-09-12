@@ -41,9 +41,9 @@ app.post('/api/login', async (req, res) => {
     alice: {
       username: 'alice',
       email: 'alice@rtarwaygmail.onmicrosoft.com',
-      displayName: 'Alice (Auditor / Storage Role Assigned)',
+      displayName: 'Alice (Auditor / Storage Reader / Mail.Send)',
       roles: ['admin', 'auditor', 'Storage Blob Data Reader'],
-      scopes: ['mcp:tool1', 'mcp:tool2']
+      scopes: ['mcp:tool1', 'mcp:tool2', 'Mail.Send']
     },
     bob: {
       username: 'bob',

@@ -52,7 +52,9 @@ class OpaPolicyEngine {
     }
 
     const plannedTool = input?.plan?.plannedTool;
-    if (!plannedTool || !['tool1', 'tool2'].includes(plannedTool)) {
+    const isMultiStep = input?.plan?.planType === 'MULTI_STEP_PIPELINE';
+    const permittedTools = ['tool1', 'tool2', 'multi_step_pipeline', 'send_email_graph'];
+    if (!isMultiStep && (!plannedTool || !permittedTools.includes(plannedTool))) {
       return {
         allowed: false,
         reason: `Orchestrator FGP Violation: Tool '${plannedTool}' is not a permitted tool.`,

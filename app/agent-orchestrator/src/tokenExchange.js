@@ -86,11 +86,30 @@ class TokenExchangeEngine {
       : (userClaims.realm_access?.roles || ['regular-user']);
 
     const isAdmin = userRoles.includes('admin');
-    const requiredScopeForTool = requestedTool === 'tool2' ? 'mcp:tool2' : 'mcp:tool1';
+    const userScopesFromToken = (userClaims.scope ? userClaims.scope.split(' ') : []);
+    const hasMailSend = userScopesFromToken.includes('Mail.Send') || userRoles.includes('Mail.Send') || isAdmin;
 
-    const userEligibleScopes = isAdmin ? ['mcp:tool1', 'mcp:tool2'] : ['mcp:tool1'];
-    const downscopedScopes = userEligibleScopes.filter(s => s === requiredScopeForTool);
-    const finalScopes = downscopedScopes.length > 0 ? downscopedScopes : ['mcp:tool1'];
+    let requiredScopeForTool = 'mcp:tool1';
+    if (requestedTool === 'tool2') {
+      requiredScopeForTool = 'mcp:tool2';
+    } else if (requestedTool === 'send_email_graph' || requestedTool === 'Mail.Send') {
+      requiredScopeForTool = 'Mail.Send';
+      if (targetAudience === ENTRA_AUDIENCE) {
+        targetAudience = 'https://graph.microsoft.com';
+      }
+    }
+
+    const userEligibleScopes = ['mcp:tool1'];
+    if (isAdmin || userScopesFromToken.includes('mcp:tool2')) {
+      userEligibleScopes.push('mcp:tool2');
+    }
+    if (hasMailSend) {
+      userEligibleScopes.push('Mail.Send');
+    }
+
+    const isScopeAuthorized = userEligibleScopes.includes(requiredScopeForTool);
+    const downscopedScopes = isScopeAuthorized ? [requiredScopeForTool] : ['unauthorized'];
+    const finalScopes = downscopedScopes;
 
     const agentSpiffeId = agentSvid?.spiffeId || 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa';
 

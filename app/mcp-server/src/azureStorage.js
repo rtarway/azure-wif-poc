@@ -78,6 +78,22 @@ class AzureStorageService {
       ? (!userRoles.includes('admin') && !userRoles.includes('auditor') && !userRoles.includes('Storage Blob Data Reader') && !userUpn.includes('alice'))
       : (!userRoles.includes('admin') && !userRoles.includes('auditor') && !userRoles.includes('regular-user') && !userRoles.includes('Storage Blob Data Contributor') && !userUpn.includes('bob') && !userUpn.includes('alice'));
 
+    // Offline / Test environment short-circuit: evaluate Cloud IAM deterministically
+    if (process.env.NODE_ENV === 'test' || process.env.STORAGE_OFFLINE === 'true') {
+      if (isUnprivilegedUser) {
+        const iamError = new Error(`Azure Storage HTTP 403 Forbidden: AuthorizationPermissionMismatch (Principal '${userUpn}' has no role assignment on container '${container}')`);
+        iamError.statusCode = 403;
+        iamError.code = 'AuthorizationPermissionMismatch';
+        this._logAuditEvent('DENIED_BY_AZURE_STORAGE_IAM', container, filename, 'read', meta, iamError.message);
+        throw iamError;
+      }
+      const bucket = this.inMemoryBuckets[container];
+      if (!bucket) throw new Error(`Azure Storage container '${container}' does not exist.`);
+      if (!(filename in bucket)) throw new Error(`Blob '${filename}' not found in container '${container}'.`);
+      this._logAuditEvent('ALLOWED (SIMULATED)', container, filename, 'read', meta);
+      return { container, filename, content: bucket[filename], storageAccount: this.storageAccount, lastModified: new Date().toISOString(), delegationMeta: meta };
+    }
+
     // 1. Live Azure Blob Storage Data Plane Request
     console.log(`[AZURE-STORAGE] 📡 Dispatching Data Plane HTTP GET to Azure Blob Storage...`);
     console.log(`[AZURE-STORAGE]   URI: https://${this.storageAccount}.blob.core.windows.net/${container}/${filename}`);
@@ -188,6 +204,21 @@ class AzureStorageService {
     const isUnprivilegedUser = container === 'app1'
       ? (!userRoles.includes('admin') && !userUpn.includes('alice'))
       : (!userRoles.includes('admin') && !userRoles.includes('Storage Blob Data Contributor') && !userRoles.includes('regular-user') && !userUpn.includes('bob') && !userUpn.includes('alice'));
+
+    // Offline / Test environment short-circuit: evaluate Cloud IAM deterministically
+    if (process.env.NODE_ENV === 'test' || process.env.STORAGE_OFFLINE === 'true') {
+      if (isUnprivilegedUser) {
+        const iamError = new Error(`Azure Storage HTTP 403 Forbidden: AuthorizationPermissionMismatch (Principal '${userUpn}' lacks 'Storage Blob Data Contributor' role on container '${container}')`);
+        iamError.statusCode = 403;
+        iamError.code = 'AuthorizationPermissionMismatch';
+        this._logAuditEvent('DENIED_BY_AZURE_STORAGE_IAM', container, filename, 'write', meta, iamError.message);
+        throw iamError;
+      }
+      if (!this.inMemoryBuckets[container]) this.inMemoryBuckets[container] = {};
+      this.inMemoryBuckets[container][filename] = content;
+      this._logAuditEvent('ALLOWED (SIMULATED)', container, filename, 'write', meta);
+      return { container, filename, size: Buffer.byteLength(content || ''), storageAccount: this.storageAccount, lastModified: new Date().toISOString(), delegationMeta: meta };
+    }
 
     console.log(`[AZURE-STORAGE] 📡 Dispatching Data Plane HTTP PUT to Azure Blob Storage...`);
 

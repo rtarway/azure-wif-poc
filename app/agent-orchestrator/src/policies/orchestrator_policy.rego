@@ -31,3 +31,12 @@ valid_tool_action {
 valid_tool_action {
     input.plan.plannedTool == "tool2"
 }
+
+valid_tool_action {
+    input.plan.plannedTool == "multi_step_pipeline"
+}
+
+valid_tool_action {
+    input.plan.plannedTool == "send_email_graph"
+}
+
