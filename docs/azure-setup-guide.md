@@ -240,14 +240,14 @@ Azure Entra ID requires the SPIRE OIDC discovery documents (`/.well-known/openid
 
 ---
 
-### ☁️ Deploying the Low-Code MCP Server to Azure
+### ☁️ Deploying the Low-Code Declarative MCP Server to Azure
 
 > [!IMPORTANT]
-> ### 💡 Clarification on Microsoft Foundry Portal vs. External Agent POC
+> ### 💡 Architecture Overview: External Agent with Azure MCP Server
 > For the purpose of this POC:
 > - **The Goal**: Prove that an **external agent ecosystem** deployed on **Rancher Desktop Kubernetes** can authenticate to an Azure-deployed MCP Server using an **RFC 8693 downscoped On-Behalf-Of (OBO) token** (`sub` = human user, `act.sub` = agent SPIFFE ID).
-> - **Direct HTTPS Connection**: The Rancher Desktop agent communicates directly with the MCP server over HTTPS (`/mcp` endpoint).
-> - **No Foundry Portal Configuration Needed**: Configuring tools inside the Microsoft Foundry portal (`ai.azure.com`) is only for agents built *inside* Microsoft Foundry. For external agents calling an Azure MCP server, **the Microsoft Foundry portal step is completely unnecessary**.
+> - **Direct HTTPS Connection**: The Rancher Desktop agent communicates directly with the MCP server over HTTPS (`/mcp` endpoint) on Azure App Service.
+> - **Zero Account Keys**: Storage access uses short-lived (60s TTL) JIT User-Delegation credentials bound to the caller's Entra identity and token signature.
 
 ---
 

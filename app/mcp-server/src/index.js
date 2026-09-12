@@ -1,5 +1,5 @@
 // Azure MCP Server (July 2026 Protocol Version)
-// Low-Code Declarative Architecture for Microsoft Foundry (Azure AI Foundry)
+// Low-Code Declarative Architecture for Azure Storage Services
 
 const express = require('express');
 const DeclarativeEngine = require('./declarativeEngine');
@@ -13,11 +13,11 @@ const PROTOCOL_VERSION = process.env.MCP_PROTOCOL_VERSION || '2026-07-15';
 
 const engine = new DeclarativeEngine();
 
-// Health probe for Microsoft Foundry & Kubernetes
+// Health probe for Azure App Service & Kubernetes
 app.get('/healthz', (req, res) => {
   res.json({
     status: 'UP',
-    platform: process.env.FOUNDRY_PROJECT_NAME ? 'Microsoft Foundry' : 'Microsoft Foundry / Container',
+    platform: 'Azure App Service / Container',
     protocolVersion: PROTOCOL_VERSION,
     toolsRegistered: engine.listTools().length
   });
@@ -53,7 +53,7 @@ app.post('/mcp', async (req, res) => {
         serverInfo: {
           name: 'azure-lowcode-mcp-server',
           version: '1.0.0',
-          deploymentPlatform: process.env.FOUNDRY_PROJECT_NAME ? 'Microsoft Foundry' : 'Microsoft Foundry / Container'
+          deploymentPlatform: 'Azure App Service / Container'
         }
       }
     });
@@ -160,7 +160,7 @@ app.post('/api/tools/:name', async (req, res) => {
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`===========================================================`);
-    console.log(` Azure Low-Code Microsoft Foundry MCP Server listening on ${PORT}`);
+    console.log(` Azure Low-Code Declarative MCP Server listening on ${PORT}`);
     console.log(` Protocol Version: ${PROTOCOL_VERSION} (July 2026)`);
     console.log(`===========================================================`);
   });

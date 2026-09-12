@@ -1,6 +1,6 @@
-# Low-Code Declarative MCP & Microsoft Foundry Deployment Guide
+# Low-Code Declarative MCP Server Guide
 
-This guide explains how tools are defined declaratively without boilerplate and deployed to **Microsoft Foundry** (Azure AI Foundry at `https://ai.azure.com`).
+This guide explains how tools, schemas, and security policies are defined declaratively without imperative boilerplate in `tools.yaml` and served via the **Model Context Protocol (MCP)** JSON-RPC 2.0 interface.
 
 ---
 
@@ -79,45 +79,43 @@ To add a new tool (e.g. `tool3` for analytics):
 2. The MCP declarative engine (`declarativeEngine.js`) automatically:
    - Registers `tool3` in the `tools/list` endpoint.
    - Enforces schema types and required properties.
-   - Evaluates caller scopes from the OBO token.
+   - Evaluates caller scopes from the RFC 8693 token.
    - Rejects unauthorized calls with native MCP error messages.
 
 ---
 
-## 2. Microsoft Foundry Project Manifest (`foundry.yaml`)
+## 2. Declarative Fine-Grained Policy (FGP) Enforcement
 
-The MCP server is packaged for Microsoft Foundry (Azure AI Foundry) project environments:
+In addition to coarse OAuth scopes, `tools.yaml` defines in-process fine-grained safety guardrails:
 
 ```yaml
-name: azure-mcp-server
-version: 1.0.0
-protocol: mcp
-protocol_version: "2026-07-15"
-
-foundry:
-  project: proj-azure-wif-mcp
-  hub: hub-azure-wif-foundry
-  service_type: custom-mcp-tool-service
-
-runtime:
-  language: nodejs
-  version: "20"
-  entrypoint: src/index.js
-  port: 8080
-
-environment:
-  MCP_PROTOCOL_VERSION: "2026-07-15"
-  AZURE_STORAGE_ACCOUNT: "azwifstoragepoc"
-
-tools:
-  declarative_spec: tools.yaml
+    fine_grained_policies:
+      - id: "prevent_audit_tampering"
+        description: "Prevents modifying compliance or audit files"
+        effect: "DENY"
+        condition: "args.action == 'write' && (args.filename.includes('compliance') || args.filename.includes('audit'))"
+        message: "Fine-Grained Policy Denial: Compliance and audit records are immutable and cannot be overwritten."
+      - id: "restricted_extensions"
+        description: "Enforce allowed data file extensions"
+        effect: "DENY"
+        condition: "!args.filename.endsWith('.json') && !args.filename.endsWith('.txt') && !args.filename.endsWith('.yaml')"
+        message: "Fine-Grained Policy Denial: Only .json, .txt, and .yaml files are permitted."
 ```
 
-### Deployment Steps
-```bash
-# 1. Setup Microsoft Foundry Hub and Project (if not already done)
-./scripts/foundry-setup-project.sh
+---
 
-# 2. Deploy MCP Server and declarative tools to Microsoft Foundry
-./scripts/foundry-deploy.sh
+## 3. Deployment Options
+
+The declarative MCP Server can be deployed in two standard production modes:
+
+### Option A: Azure App Service (Linux Web App)
+Deploy with zero account keys using JIT User-Delegation to Azure Storage:
+```bash
+./scripts/deploy-azure-mcp.sh
+```
+
+### Option B: Local / Hybrid Kubernetes
+Deploy as a containerized microservice alongside your agent mesh:
+```bash
+kubectl apply -f k8s/mcp-server-deployment.yaml
 ```

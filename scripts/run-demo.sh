@@ -82,7 +82,7 @@ async function runScenario(title, userEmail, roles, scopes, prompt) {
   console.log('   * Actor (act):  ', result.oboExchange.actor);
   console.log('   * Scope:        ', result.oboExchange.scopes);
 
-  console.log('4. Azure Low-Code Microsoft Foundry MCP Server Execution:');
+  console.log('4. Azure Low-Code Declarative MCP Server Execution:');
   const isErr = result.mcpResponse.isError;
   if (!isErr) {
     console.log('   * Status:        SUCCESS (Allowed by Policy)');

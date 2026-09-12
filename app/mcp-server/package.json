@@ -1,7 +1,7 @@
 {
   "name": "azure-mcp-server",
   "version": "1.0.0",
-  "description": "Low-Code Microsoft Foundry MCP Server for Azure Storage with OBO Delegation",
+  "description": "Low-Code Declarative MCP Server for Azure Storage with RFC 8693 Delegation",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

@@ -1,6 +1,6 @@
 # End-to-End Architecture: Azure WIF & OBO Agentic Flow with Low-Code MCP
 
-This document details the security, identity, and architectural design of the **Agentic AI Ecosystem** deployed on **Rancher Desktop Kubernetes** accessing a **Low-Code Microsoft Foundry Model Context Protocol (MCP) Server** for **Azure Cloud Storage**.
+This document details the security, identity, and architectural design of the **Agentic AI Ecosystem** deployed on **Rancher Desktop Kubernetes** accessing a **Low-Code Declarative Model Context Protocol (MCP) Server** for **Azure Cloud Storage**.
 
 ---
 
@@ -208,7 +208,7 @@ When the agent prepares to invoke the MCP server:
    }
    ```
 
-### 3.5 Azure Low-Code Microsoft Foundry MCP Server
+### 3.5 Azure Low-Code Declarative MCP Server
 - **MCP Protocol Specification**: Implements protocol version `2026-07-15` (July 2026 release) with JSON-RPC 2.0 endpoints:
   - `initialize`: Protocol negotiation
   - `tools/list`: Declarative tool metadata
@@ -237,7 +237,7 @@ When the agent prepares to invoke the MCP server:
     }
   }
   ```
-- **Deployment**: Supports Microsoft Foundry deployment via project tool registration (`foundry.yaml` and `./scripts/foundry-deploy.sh`), alongside local Kubernetes deployment.
+- **Deployment**: Deployed directly to **Azure App Service** (`./scripts/deploy-azure-mcp.sh`) or containerized in Kubernetes (`k8s/mcp-server-deployment.yaml`).
 
 ---
 
