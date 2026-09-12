@@ -104,12 +104,17 @@
       <div>
         <div class="card">
           <h2>1. Simulated Keycloak / Entra Identity</h2>
-          <div style="display: flex; gap: 8px;">
-            <button id="btn-alice" class="btn btn-alice" style="flex:1;" onclick="login('alice')">
-              Alice (Admin / Reader)
-            </button>
-            <button id="btn-bob" class="btn btn-bob" style="flex:1;" onclick="login('bob')">
-              Bob (Regular / Contributor)
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; gap: 8px;">
+              <button id="btn-alice" class="btn btn-alice" style="flex:1;" onclick="login('alice')">
+                Alice (Reader + Mail.Send)
+              </button>
+              <button id="btn-alice-no-mail" class="btn" style="flex:1; background: rgba(239, 68, 68, 0.08); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3);" onclick="login('alice-no-mail')">
+                Alice (No Mail.Send)
+              </button>
+            </div>
+            <button id="btn-bob" class="btn btn-bob" style="width: 100%;" onclick="login('bob')">
+              Bob (Regular / Contributor on app2 / No app1)
             </button>
           </div>
 
@@ -136,6 +141,27 @@
             <div>&bull; <b>Container <code>app2</code></b>: Alice & Bob (Contributor: Read/Write)</div>
             <div>&bull; <b>Tool RBAC</b>: <code>tool1</code> (Read/Write) | <code>tool2</code> (Admin Audit Only)</div>
             <div>&bull; <b>Delegation Protocol</b>: RFC 8693 (OAuth 2.0 Token Exchange) with recursive <code>act</code> claims</div>
+          </div>
+        </div>
+
+        <div class="card" style="border-left: 4px solid var(--purple);">
+          <h2>3. Live Email Dispatch (Option 1)</h2>
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">
+            Delivers physical email directly to <code>rtarway@gmail.com</code> when Step 4 is authorized.
+          </div>
+          <div style="margin-bottom: 8px;">
+            <label style="font-size: 11px; font-weight: 600; color: var(--text-muted);">Provider:</label>
+            <select id="email-provider" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid var(--border); font-size: 12px; background: var(--bg-card); color: var(--text);">
+              <option value="resend">Resend (re_... / 100 free emails/day)</option>
+              <option value="sendgrid">SendGrid (SG... / 100 free emails/day)</option>
+            </select>
+          </div>
+          <div style="margin-bottom: 8px;">
+            <label style="font-size: 11px; font-weight: 600; color: var(--text-muted);">API Key (Stored only in local browser session):</label>
+            <input type="password" id="email-api-key" placeholder="Enter re_... or SG... key" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid var(--border); font-size: 12px; box-sizing: border-box;" />
+          </div>
+          <div style="font-size: 10px; color: var(--text-muted);">
+            💡 Can also be set globally via <code>RESEND_API_KEY</code> or <code>SENDGRID_API_KEY</code> in environment.
           </div>
         </div>
       </div>
@@ -165,9 +191,13 @@
               <div>🛡️ <b>Scenario E (Fine-Grained Policy)</b>: Overwrite compliance.txt in app1</div>
               <div class="desc">Target: <code>compliance.txt</code> &bull; <b style="color:var(--danger)">Blocked by Declarative tools.yaml FGP immutability</b></div>
             </button>
-            <button class="quick-btn" style="border-left: 4px solid var(--purple); background: rgba(168, 85, 247, 0.08);" onclick="setPrompt('Read app1 financial report and app2 metrics, redact sensitive info, and email summary via Microsoft Graph to rtarway@gmail.com')">
-              <div>🔄 <b>Scenario F (Multi-Hop Autonomous Pipeline)</b>: Read app1 + app2, redact, and email via Microsoft Graph</div>
-              <div class="desc">App1 (Reader) ➔ App2 (Metrics) ➔ LLM Redaction (PII/Salary) ➔ Graph API to <code>rtarway@gmail.com</code> &bull; <b style="color:var(--primary)">Allowed for Alice</b> &bull; <b style="color:var(--danger)">Denied for Bob (Cloud IAM / Mail.Send)</b></div>
+            <button class="quick-btn" style="border-left: 4px solid var(--purple); background: rgba(168, 85, 247, 0.08);" onclick="loginAndRunPipeline('alice')">
+              <div>🔄 <b>Scenario F (Multi-Hop Authorized)</b>: Read app1 + app2, redact, and email via Microsoft Graph</div>
+              <div class="desc">App1 (Reader) ➔ App2 (Metrics) ➔ LLM Redaction ➔ Graph API to <code>rtarway@gmail.com</code> &bull; <b style="color:var(--primary)">Permitted for Alice (Reader + Mail.Send)</b></div>
+            </button>
+            <button class="quick-btn" style="border-left: 4px solid var(--danger); background: rgba(239, 68, 68, 0.06);" onclick="loginAndRunPipeline('alice-no-mail')">
+              <div>🚫 <b>Scenario G (Simulate Revoked Graph Permission)</b>: Alice executes pipeline without Mail.Send</div>
+              <div class="desc">App1 (✅ 200) ➔ App2 (✅ 200) ➔ Redaction (✅) ➔ <b style="color:var(--danger)">Graph API Blocked: 403 Forbidden (No Email Sent)</b></div>
             </button>
           </div>
 
@@ -389,8 +419,9 @@
     let currentUser = null;
 
     async function login(userType) {
-      document.querySelectorAll('.btn-alice, .btn-bob').forEach(b => b.classList.remove('btn-active'));
-      const activeBtn = document.getElementById(userType === 'alice' ? 'btn-alice' : 'btn-bob');
+      document.querySelectorAll('#btn-alice, #btn-alice-no-mail, #btn-bob').forEach(b => b.classList.remove('btn-active'));
+      const btnId = userType === 'alice' ? 'btn-alice' : (userType === 'alice-no-mail' ? 'btn-alice-no-mail' : 'btn-bob');
+      const activeBtn = document.getElementById(btnId);
       if (activeBtn) activeBtn.classList.add('btn-active');
 
       try {
@@ -403,19 +434,27 @@
         currentToken = data.token;
         currentUser = data.user;
 
-        document.getElementById('btn-alice').innerHTML = userType === 'alice' ? '✅ Alice (Admin / Reader)' : 'Alice (Admin / Reader)';
-        document.getElementById('btn-bob').innerHTML = userType === 'bob' ? '✅ Bob (Regular / Contributor)' : 'Bob (Regular / Contributor)';
+        document.getElementById('btn-alice').innerHTML = userType === 'alice' ? '✅ Alice (Reader + Mail.Send)' : 'Alice (Reader + Mail.Send)';
+        document.getElementById('btn-alice-no-mail').innerHTML = userType === 'alice-no-mail' ? '✅ Alice (No Mail.Send)' : 'Alice (No Mail.Send)';
+        document.getElementById('btn-bob').innerHTML = userType === 'bob' ? '✅ Bob (Contributor on app2)' : 'Bob (Contributor on app2)';
 
         document.getElementById('user-info').style.display = 'block';
-        document.getElementById('user-name').innerHTML = `${currentUser.displayName} <span class="role-badge ${currentUser.roles.includes('admin') ? 'role-admin' : 'role-regular'}">${currentUser.roles.includes('admin') ? 'Admin' : 'Regular User'}</span>`;
+        const roleLabel = currentUser.roles.includes('admin') ? 'Admin' : (currentUser.roles.includes('auditor') ? 'Auditor' : 'Regular User');
+        document.getElementById('user-name').innerHTML = `${currentUser.displayName} <span class="role-badge ${currentUser.roles.includes('admin') ? 'role-admin' : 'role-regular'}">${roleLabel}</span>`;
         document.getElementById('user-email').textContent = currentUser.email;
         document.getElementById('user-scopes').textContent = currentUser.scopes.join(', ');
-        document.getElementById('user-azure-role').textContent = userType === 'alice' 
+        document.getElementById('user-azure-role').textContent = (userType === 'alice' || userType === 'alice-no-mail')
           ? 'Storage Blob Data Reader (app1 & app2)' 
           : 'Storage Blob Data Contributor (app2 ONLY; No app1 role)';
       } catch (err) {
         alert('Login failed: ' + err.message);
       }
+    }
+
+    async function loginAndRunPipeline(userType) {
+      await login(userType);
+      setPrompt('Read app1 financial report and app2 metrics, redact sensitive info, and email summary via Microsoft Graph to rtarway@gmail.com');
+      submitPrompt();
     }
 
     function setPrompt(text) {
@@ -434,6 +473,14 @@
         return;
       }
 
+      const emailProvider = document.getElementById('email-provider')?.value;
+      const emailApiKey = document.getElementById('email-api-key')?.value.trim();
+      const emailConfig = {};
+      if (emailApiKey) {
+        if (emailProvider === 'sendgrid') emailConfig.sendgridApiKey = emailApiKey;
+        else emailConfig.resendApiKey = emailApiKey;
+      }
+
       document.getElementById('empty-state').style.display = 'none';
       document.getElementById('results-container').style.display = 'block';
       document.getElementById('status-indicator').innerHTML = '<span style="color: var(--primary); font-size: 12px;">Agent reasoning & delegating...</span>';
@@ -445,7 +492,7 @@
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${currentToken}`
           },
-          body: JSON.stringify({ prompt, token: currentToken })
+          body: JSON.stringify({ prompt, token: currentToken, emailConfig })
         });
 
         const data = await res.json();
@@ -502,9 +549,31 @@
           if (mh.executedSteps >= 4) {
             const s4Ok = s4.status === 'SUCCESS';
             s4Card.className = 'hop-card ' + (s4Ok ? 'success' : 'denied');
-            document.getElementById('mh-step4-status').innerHTML = s4Ok
+
+            let relay = null;
+            try {
+              if (s4.mcpResponse?.content?.[0]?.text) {
+                const parsed = JSON.parse(s4.mcpResponse.content[0].text);
+                relay = parsed.data?.deliveryRelay;
+              }
+            } catch {}
+
+            let relayHtml = '';
+            if (s4Ok) {
+              if (relay?.delivered) {
+                relayHtml = `<div style="font-size: 10px; margin-top: 4px; color: var(--success); font-weight: 600;">📧 Delivered via ${relay.provider} (${relay.messageId || 'OK'})</div>`;
+              } else if (relay?.provider === 'unconfigured') {
+                relayHtml = `<div style="font-size: 10px; margin-top: 4px; color: var(--warning);">⚠️ Graph validated (Set API Key to deliver)</div>`;
+              } else if (relay?.error) {
+                relayHtml = `<div style="font-size: 10px; margin-top: 4px; color: var(--danger);">⚠️ ${relay.provider || 'Relay'}: ${relay.error}</div>`;
+              }
+            } else {
+              relayHtml = `<div style="font-size: 10px; margin-top: 4px; color: var(--danger); font-weight: 600;">🚫 Zero Email Dispatched (Blocked)</div>`;
+            }
+
+            document.getElementById('mh-step4-status').innerHTML = (s4Ok
               ? '<span style="color: var(--success); font-weight: bold;">✅ HTTP 202 ACCEPTED</span>'
-              : `<span style="color: var(--danger); font-weight: bold;">❌ ${s4.status}</span>`;
+              : `<span style="color: var(--danger); font-weight: bold;">❌ ${s4.status}</span>`) + relayHtml;
           } else {
             s4Card.className = 'hop-card';
             document.getElementById('mh-step4-status').innerHTML = '<span style="color: var(--text-muted);">⏸️ SKIPPED</span>';

@@ -103,7 +103,7 @@ function verifyOboToken(authHeader, delegatedHeader) {
     } else if (typeof decoded.scp === 'string') {
       scopes = decoded.scp.split(' ').filter(Boolean);
     } else if (Array.isArray(decoded.roles)) {
-      scopes = decoded.roles.filter(r => r.startsWith('mcp:'));
+      scopes = decoded.roles.filter(r => r.startsWith('mcp:') || r === 'Mail.Send');
     } else if (Array.isArray(decoded.scopes)) {
       scopes = decoded.scopes;
     }

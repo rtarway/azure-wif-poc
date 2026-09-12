@@ -31,7 +31,9 @@ app.post('/api/login', async (req, res) => {
   const { username, password, userType } = req.body || {};
 
   let resolvedUser = 'bob';
-  if (userType === 'admin' || userType === 'alice' || username === 'alice') {
+  if (userType === 'alice-no-mail' || username === 'alice-no-mail') {
+    resolvedUser = 'alice-no-mail';
+  } else if (userType === 'admin' || userType === 'alice' || username === 'alice') {
     resolvedUser = 'alice';
   } else if (username === 'bob' || userType === 'regular-user' || userType === 'bob') {
     resolvedUser = 'bob';
@@ -42,8 +44,15 @@ app.post('/api/login', async (req, res) => {
       username: 'alice',
       email: 'alice@rtarwaygmail.onmicrosoft.com',
       displayName: 'Alice (Auditor / Storage Reader / Mail.Send)',
-      roles: ['admin', 'auditor', 'Storage Blob Data Reader'],
+      roles: ['admin', 'auditor', 'Storage Blob Data Reader', 'Mail.Send'],
       scopes: ['mcp:tool1', 'mcp:tool2', 'Mail.Send']
+    },
+    'alice-no-mail': {
+      username: 'alice-no-mail',
+      email: 'alice@rtarwaygmail.onmicrosoft.com',
+      displayName: 'Alice (Storage Reader Only / NO Graph Mail.Send)',
+      roles: ['auditor', 'Storage Blob Data Reader'],
+      scopes: ['mcp:tool1', 'mcp:tool2'] // Explicitly lacks Mail.Send
     },
     bob: {
       username: 'bob',
@@ -90,7 +99,12 @@ app.post('/api/chat', async (req, res) => {
     return res.status(400).json({ error: 'Missing prompt.' });
   }
 
-  const payload = JSON.stringify({ prompt, token, context: req.body && req.body.context });
+  const payload = JSON.stringify({
+    prompt,
+    token,
+    context: req.body && req.body.context,
+    emailConfig: req.body && req.body.emailConfig
+  });
   const headers = {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(payload)

@@ -87,7 +87,7 @@ class TokenExchangeEngine {
 
     const isAdmin = userRoles.includes('admin');
     const userScopesFromToken = (userClaims.scope ? userClaims.scope.split(' ') : []);
-    const hasMailSend = userScopesFromToken.includes('Mail.Send') || userRoles.includes('Mail.Send') || isAdmin;
+    const hasMailSend = userScopesFromToken.includes('Mail.Send') || userRoles.includes('Mail.Send');
 
     let requiredScopeForTool = 'mcp:tool1';
     if (requestedTool === 'tool2') {

@@ -126,6 +126,24 @@ describe('Web Frontend Tests (Outside SPIRE)', () => {
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(res.body.user.username, 'alice');
     assert.ok(res.body.user.scopes.includes('mcp:tool2'));
+    assert.ok(res.body.user.scopes.includes('Mail.Send'));
+  });
+
+  test('POST /api/login for UI userType alice-no-mail issues token without Mail.Send scope', async () => {
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/login',
+      body: { userType: 'alice-no-mail' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.user.username, 'alice-no-mail');
+    assert.ok(res.body.user.scopes.includes('mcp:tool1'));
+    assert.ok(res.body.user.scopes.includes('mcp:tool2'));
+    assert.ok(!res.body.user.scopes.includes('Mail.Send'));
+
+    const decoded = jwtUtil.decode(res.body.token);
+    assert.strictEqual(decoded.scope, 'mcp:tool1 mcp:tool2');
   });
 
   test('POST /api/login for UI userType bob switches properly to Bob', async () => {

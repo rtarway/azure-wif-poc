@@ -1,7 +1,87 @@
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const yamlUtil = require('./yamlUtil');
 const azureStorage = require('./azureStorage');
+const emailDispatcher = require('./emailDispatcher');
+
+async function callLiveMicrosoftGraphApi({ token, recipient, subject, body }) {
+  if (!token || (process.env.NODE_ENV === 'test' && !process.env.TEST_LIVE_AZURE)) {
+    return {
+      status: 202,
+      statusText: 'Accepted (Simulated Test Mode)',
+      liveCallAttempted: false,
+      headers: {
+        'x-ms-ags-diagnostic': 'simulated-azure-diagnostic-2026',
+        'request-id': 'simulated-graph-req-id'
+      }
+    };
+  }
+
+  return new Promise(resolve => {
+    const payload = JSON.stringify({
+      message: {
+        subject,
+        body: { contentType: 'Text', content: body },
+        toRecipients: [{ emailAddress: { address: recipient } }]
+      },
+      saveToSentItems: 'true'
+    });
+
+    const req = https.request(
+      'https://graph.microsoft.com/v1.0/me/sendMail',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload)
+        },
+        timeout: 4000
+      },
+      res => {
+        let resData = '';
+        res.on('data', chunk => (resData += chunk));
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode,
+            statusText: res.statusMessage,
+            liveCallAttempted: true,
+            headers: {
+              'x-ms-ags-diagnostic': res.headers['x-ms-ags-diagnostic'] || null,
+              'request-id': res.headers['request-id'] || null,
+              'client-request-id': res.headers['client-request-id'] || null,
+              'date': res.headers['date'] || null
+            },
+            data: resData ? (function() { try { return JSON.parse(resData); } catch { return resData; } })() : null
+          });
+        });
+      }
+    );
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({
+        status: 408,
+        statusText: 'Request Timeout',
+        liveCallAttempted: true,
+        error: 'Microsoft Graph API connection timed out'
+      });
+    });
+
+    req.on('error', err => {
+      resolve({
+        status: 502,
+        statusText: 'Bad Gateway',
+        liveCallAttempted: true,
+        error: err.message
+      });
+    });
+
+    req.write(payload);
+    req.end();
+  });
+}
 
 class DeclarativeEngine {
   constructor(toolsYamlPath) {
@@ -184,9 +264,29 @@ class DeclarativeEngine {
 
       if (toolDef.target_backend === 'microsoft_graph') {
         console.log(`[MCP-GRAPH] Step 4 (Graph API): Dispatching email via Microsoft Graph /v1.0/me/sendMail to '${args.recipient}'...`);
+
+        // 1. Live call to Microsoft Graph API
+        const bearerToken = authContext?.rawToken || authContext?.token;
+        const liveGraphRes = await callLiveMicrosoftGraphApi({
+          token: bearerToken,
+          recipient: args.recipient,
+          subject: args.subject,
+          body: args.body
+        });
+
+        // 2. Strict Auth-Gated Real Email Delivery (Option 1)
+        const deliveryRes = await emailDispatcher.dispatchRealEmail({
+          recipient: args.recipient,
+          subject: args.subject,
+          body: args.body,
+          config: args.emailConfig || {}
+        });
+
         operationResult = {
-          graphApiStatus: 202,
-          graphApiStatusText: 'Accepted',
+          graphApiStatus: liveGraphRes.status,
+          graphApiStatusText: liveGraphRes.statusText,
+          graphHeaders: liveGraphRes.headers,
+          liveCallAttempted: liveGraphRes.liveCallAttempted,
           endpoint: 'https://graph.microsoft.com/v1.0/me/sendMail',
           deliveredTo: args.recipient,
           subject: args.subject,
@@ -197,6 +297,7 @@ class DeclarativeEngine {
             verifiedScope: 'Mail.Send',
             graphAudience: 'https://graph.microsoft.com'
           },
+          deliveryRelay: deliveryRes,
           graphPayload: {
             message: {
               subject: args.subject,
@@ -217,7 +318,9 @@ class DeclarativeEngine {
           requestedTool: toolName,
           recipient: args.recipient,
           subject: args.subject,
-          decision: 'ALLOWED'
+          decision: 'ALLOWED',
+          liveGraphStatus: liveGraphRes.status,
+          deliveryStatus: deliveryRes.delivered ? 'DELIVERED' : (deliveryRes.provider === 'unconfigured' ? 'CONFIG_REQUIRED' : 'DELIVERY_FAILED')
         };
 
         console.log(`[MCP Graph] EMAIL DISPATCHED: ${JSON.stringify(auditLog)}`);

@@ -340,8 +340,9 @@ app.post('/api/agent/chat', async (req, res) => {
 
         // Verify caller has Mail.Send permission
         const hasMailSend = (step4Exchange.claims.roles || []).includes('Mail.Send') ||
-          (userClaims.roles || []).includes('admin') ||
-          ((userClaims.scope || '').includes('Mail.Send'));
+          ((step4Exchange.claims.scope || '').split(' ').includes('Mail.Send')) ||
+          ((userClaims.scope || '').split(' ').includes('Mail.Send')) ||
+          (userClaims.roles || []).includes('Mail.Send');
 
         if (!hasMailSend) {
           const authDenial = {
@@ -374,7 +375,8 @@ app.post('/api/agent/chat', async (req, res) => {
             {
               recipient: targetRecipient,
               subject: step4.arguments.subject,
-              body: step3Redaction.redactedReport
+              body: step3Redaction.redactedReport,
+              emailConfig: req.body?.emailConfig || {}
             },
             step4Exchange.exchangedToken,
             step4Exchange.delegatedUser,

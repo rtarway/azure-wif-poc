@@ -360,5 +360,34 @@ describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
     assert.strictEqual(res.body.multiHopExecution.steps[3].status, 'DENIED_BY_FGP');
     assert.ok(res.body.mcpResponse.content[0].text.includes('Fine-Grained Policy Denial'));
   });
+
+  test('Multi-Hop Pipeline: Alice without Mail.Send is permitted on App1/App2 but denied at Step 4 (No email sent)', async () => {
+    const aliceNoMailToken = mintKeycloakToken({
+      sub: 'alice@example.com',
+      roles: ['admin', 'auditor', 'Storage Blob Data Reader'],
+      scope: 'mcp:tool1 mcp:tool2' // Notice NO Mail.Send scope!
+    });
+
+    const res = await invokeApp(app, {
+      method: 'POST',
+      url: '/api/agent/chat',
+      headers: { Authorization: `Bearer ${aliceNoMailToken}` },
+      body: { prompt: 'Read app1 and app2, redact sensitive info, and email summary via Graph API to rtarway@gmail.com' }
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.status, 'FAILED_POLICY_CHECK');
+    assert.strictEqual(res.body.multiHopExecution.completed, false);
+    assert.strictEqual(res.body.multiHopExecution.executedSteps, 4);
+    // Step 1: Storage read on app1 succeeded
+    assert.strictEqual(res.body.multiHopExecution.steps[0].status, 'SUCCESS');
+    // Step 2: Storage read on app2 succeeded
+    assert.strictEqual(res.body.multiHopExecution.steps[1].status, 'SUCCESS');
+    // Step 3: LLM Redaction succeeded
+    assert.strictEqual(res.body.multiHopExecution.steps[2].status, 'SUCCESS');
+    // Step 4: Microsoft Graph Email was strictly DENIED
+    assert.strictEqual(res.body.multiHopExecution.steps[3].status, 'DENIED_BY_POLICY');
+    assert.ok(res.body.mcpResponse.content[0].text.includes('lacks required Microsoft Graph scope \'Mail.Send\''));
+  });
 });
 

@@ -432,5 +432,30 @@ describe('Azure Low-Code MCP Server Tests (Protocol Spec July 2026)', () => {
     assert.strictEqual(res.result.audit.decision, 'DENIED_BY_FGP');
     assert.ok(res.result.content[0].text.includes('Fine-Grained Policy Denial'));
   });
+
+  test('send_email_graph: Integrates deliveryRelay with status in response data', async () => {
+    const aliceGraphToken = mintOboToken({
+      sub: 'alice@example.com',
+      scopes: ['Mail.Send']
+    });
+
+    const res = await rpcRequest(
+      'tools/call',
+      {
+        name: 'send_email_graph',
+        arguments: {
+          recipient: 'rtarway@gmail.com',
+          subject: 'Option 1 Real Delivery Test',
+          body: 'Testing Option 1 email dispatch coupling.'
+        }
+      },
+      aliceGraphToken
+    );
+
+    assert.strictEqual(res.result.isError, false);
+    const parsed = JSON.parse(res.result.content[0].text);
+    assert.ok(parsed.data.deliveryRelay);
+    assert.strictEqual(parsed.data.deliveryRelay.targetRecipient, 'rtarway@gmail.com');
+  });
 });
 
