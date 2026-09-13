@@ -316,8 +316,15 @@ describe('A2A Agent Orchestrator & Token Exchange Tests', () => {
     assert.strictEqual(res.body.multiHopExecution.totalSteps, 4);
     assert.strictEqual(res.body.multiHopExecution.executedSteps, 4);
     assert.ok(res.body.multiHopExecution.redactionSummary.redactionsPerformed.length > 0);
+    assert.strictEqual(res.body.multiHopExecution.steps[3].tool, 'microsoft_graph_direct');
     assert.strictEqual(res.body.multiHopExecution.steps[3].recipient, 'rtarway@gmail.com');
     assert.strictEqual(res.body.multiHopExecution.steps[3].status, 'SUCCESS');
+    assert.strictEqual(res.body.conversationalTurns.length, 4);
+    assert.strictEqual(res.body.conversationalTurns[0].intent, 'FETCH_APP1_DATA');
+    assert.strictEqual(res.body.conversationalTurns[1].intent, 'FETCH_APP2_DATA');
+    assert.strictEqual(res.body.conversationalTurns[2].intent, 'REDACT_AND_SYNTHESIZE');
+    assert.strictEqual(res.body.conversationalTurns[3].intent, 'DISPATCH_GRAPH_EMAIL');
+    assert.strictEqual(res.body.conversationalTurns[3].invokedTarget.includes('Microsoft Graph API'), true);
   });
 
   test('Multi-Hop Pipeline: Bob is denied on App1 due to Cloud IAM Storage RBAC policy', async () => {

@@ -83,31 +83,3 @@ tools:
         condition: "args.filename.includes('key') || args.filename.includes('secret') || args.filename.includes('cred')"
         message: "Fine-Grained Policy Denial: Access to credential or private key files is strictly prohibited."
 
-  - name: "send_email_graph"
-    title: "Microsoft Graph Email Dispatch Tool"
-    description: "Dispatches an email via Microsoft Graph API v1.0 /me/sendMail with delegated RFC 8693 token. Permitted for users with Mail.Send scope."
-    required_scope: "Mail.Send"
-    target_backend: "microsoft_graph"
-    inputSchema:
-      type: "object"
-      properties:
-        recipient:
-          type: "string"
-          description: "Target email recipient (strictly restricted to rtarway@gmail.com)"
-        subject:
-          type: "string"
-          description: "Email subject line"
-        body:
-          type: "string"
-          description: "Redacted message content"
-      required:
-        - "recipient"
-        - "subject"
-        - "body"
-    fine_grained_policies:
-      - id: "enforce_fixed_recipient"
-        description: "Enforces that emails can only be sent to authorized fixed recipient rtarway@gmail.com"
-        effect: "DENY"
-        condition: "args.recipient !== 'rtarway@gmail.com'"
-        message: "Fine-Grained Policy Denial: Outbound emails are restricted strictly to rtarway@gmail.com."
-

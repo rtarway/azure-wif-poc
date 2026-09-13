@@ -56,8 +56,8 @@ class LLMSimulator {
           },
           {
             stepNumber: 4,
-            name: 'Microsoft Graph Email Dispatch',
-            tool: 'send_email_graph',
+            name: 'Direct Orchestrator Microsoft Graph Email Dispatch',
+            tool: 'microsoft_graph_direct',
             requiredScope: 'Mail.Send',
             targetAudience: 'https://graph.microsoft.com',
             arguments: {
@@ -183,6 +183,65 @@ class LLMSimulator {
       redactedReport: sanitizedReport,
       redactionsPerformed
     };
+  }
+
+  /**
+   * Plans individual conversational turn in the multi-hop reasoning loop.
+   */
+  planTurn(turnNumber, observations = {}, userContext = {}, prompt = '') {
+    const emailMatch = (prompt || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+    const recipient = emailMatch ? emailMatch[0] : 'rtarway@gmail.com';
+
+    switch (turnNumber) {
+      case 1:
+        return {
+          turn: 1,
+          intent: 'FETCH_APP1_DATA',
+          thought: `Analyzing human prompt: need to aggregate financial and customer metrics. Step 1: Query Azure Storage container 'app1' for 'financial-report.json' using tool1.`,
+          action: {
+            tool: 'tool1',
+            arguments: { container: 'app1', action: 'read', filename: 'financial-report.json' },
+            requiredScope: 'mcp:tool1',
+            targetAudience: 'azure_storage'
+          }
+        };
+      case 2:
+        return {
+          turn: 2,
+          intent: 'FETCH_APP2_DATA',
+          thought: `Received financial report from container 'app1' into Orchestrator memory. Next step: Correlate with customer telemetry by querying container 'app2' for 'customer-metrics.json' using tool1.`,
+          action: {
+            tool: 'tool1',
+            arguments: { container: 'app2', action: 'read', filename: 'customer-metrics.json' },
+            requiredScope: 'mcp:tool1',
+            targetAudience: 'azure_storage'
+          }
+        };
+      case 3:
+        return {
+          turn: 3,
+          intent: 'REDACT_AND_SYNTHESIZE',
+          thought: `Retrieved both datasets (app1 & app2). Next step: Combine datasets, execute intelligent redaction stripping executive salaries & customer PII, and synthesize executive summary.`,
+          action: {
+            action: 'redact_and_synthesize'
+          }
+        };
+      case 4:
+        return {
+          turn: 4,
+          intent: 'DISPATCH_GRAPH_EMAIL',
+          thought: `Sanitized executive summary ready. Final step: Perform dedicated RFC 8693 token exchange for 'https://graph.microsoft.com' with 'Mail.Send' scope, then call Microsoft Graph API directly to dispatch to ${recipient}.`,
+          action: {
+            tool: 'microsoft_graph_direct',
+            recipient,
+            subject: '[Executive Summary] Redacted Financial & Customer Metrics (app1 + app2)',
+            requiredScope: 'Mail.Send',
+            targetAudience: 'https://graph.microsoft.com'
+          }
+        };
+      default:
+        return null;
+    }
   }
 }
 

@@ -11,6 +11,7 @@ const spireClient = require('./spireClient');
 const tokenExchange = require('./tokenExchange');
 const jwtUtil = require('./jwtUtil');
 const opaPolicy = require('./opaPolicy');
+const graphClient = require('./graphClient');
 
 const app = express();
 app.use(express.json());
@@ -201,12 +202,14 @@ app.post('/api/agent/chat', async (req, res) => {
   // 4b. Multi-Hop Autonomous Pipeline Execution Loop
   if (plan.planType === 'MULTI_STEP_PIPELINE') {
     const pipelineSteps = [];
+    const conversationalTurns = [];
     let halted = false;
     let finalError = null;
-
-    // --- Step 1: Read App1 Financial Report ---
-    const step1 = plan.steps[0];
     const entraAudience = process.env.ENTRA_AUDIENCE || 'api://d5850aa0-a667-41c3-8dd0-16f2dee4da25';
+
+    // --- Turn 1: Read App1 Financial Report ---
+    const t1Plan = llmSimulator.planTurn(1, {}, userClaims, prompt);
+    const step1 = plan.steps[0];
     const step1Exchange = await tokenExchange.exchangeToken({
       userToken,
       agentSvid,
@@ -223,6 +226,7 @@ app.post('/api/agent/chat', async (req, res) => {
       step1CorrelationId
     );
 
+    const step1Status = step1McpRes.isError ? (step1McpRes.cloudIAMDecision || 'FAILED') : 'SUCCESS';
     pipelineSteps.push({
       stepNumber: 1,
       name: step1.name,
@@ -231,7 +235,24 @@ app.post('/api/agent/chat', async (req, res) => {
       token: step1Exchange.exchangedToken,
       decodedToken: decodeTokenComplete(step1Exchange.exchangedToken),
       mcpResponse: step1McpRes,
-      status: step1McpRes.isError ? (step1McpRes.cloudIAMDecision || 'FAILED') : 'SUCCESS'
+      status: step1Status
+    });
+
+    conversationalTurns.push({
+      turn: 1,
+      name: 'Turn 1: App1 Financial Query',
+      intent: t1Plan.intent,
+      thought: t1Plan.thought,
+      action: t1Plan.action,
+      tokenExchange: {
+        targetAudience: entraAudience,
+        requiredScope: 'mcp:tool1',
+        token: step1Exchange.exchangedToken,
+        decoded: decodeTokenComplete(step1Exchange.exchangedToken)
+      },
+      invokedTarget: 'Azure Storage MCP Server (/app1/financial-report.json)',
+      returnedToOrchestrator: step1McpRes,
+      status: step1Status
     });
 
     if (step1McpRes.isError) {
@@ -242,11 +263,12 @@ app.post('/api/agent/chat', async (req, res) => {
     let step2McpRes = null;
     let step2Exchange = null;
     let step3Redaction = null;
-    let step4McpRes = null;
+    let step4DirectRes = null;
     let step4Exchange = null;
 
-    // --- Step 2: Read App2 Customer Metrics (if Step 1 succeeded) ---
+    // --- Turn 2: Read App2 Customer Metrics (if Turn 1 succeeded) ---
     if (!halted) {
+      const t2Plan = llmSimulator.planTurn(2, { step1: step1McpRes }, userClaims, prompt);
       const step2 = plan.steps[1];
       step2Exchange = await tokenExchange.exchangeToken({
         userToken,
@@ -264,6 +286,7 @@ app.post('/api/agent/chat', async (req, res) => {
         step2CorrelationId
       );
 
+      const step2Status = step2McpRes.isError ? (step2McpRes.cloudIAMDecision || 'FAILED') : 'SUCCESS';
       pipelineSteps.push({
         stepNumber: 2,
         name: step2.name,
@@ -272,7 +295,24 @@ app.post('/api/agent/chat', async (req, res) => {
         token: step2Exchange.exchangedToken,
         decodedToken: decodeTokenComplete(step2Exchange.exchangedToken),
         mcpResponse: step2McpRes,
-        status: step2McpRes.isError ? (step2McpRes.cloudIAMDecision || 'FAILED') : 'SUCCESS'
+        status: step2Status
+      });
+
+      conversationalTurns.push({
+        turn: 2,
+        name: 'Turn 2: App2 Customer Metrics Query',
+        intent: t2Plan.intent,
+        thought: t2Plan.thought,
+        action: t2Plan.action,
+        tokenExchange: {
+          targetAudience: entraAudience,
+          requiredScope: 'mcp:tool1',
+          token: step2Exchange.exchangedToken,
+          decoded: decodeTokenComplete(step2Exchange.exchangedToken)
+        },
+        invokedTarget: 'Azure Storage MCP Server (/app2/customer-metrics.json)',
+        returnedToOrchestrator: step2McpRes,
+        status: step2Status
       });
 
       if (step2McpRes.isError) {
@@ -281,8 +321,9 @@ app.post('/api/agent/chat', async (req, res) => {
       }
     }
 
-    // --- Step 3: LLM Redaction & Executive Synthesis ---
+    // --- Turn 3: LLM Redaction & Executive Synthesis ---
     if (!halted) {
+      const t3Plan = llmSimulator.planTurn(3, { step1: step1McpRes, step2: step2McpRes }, userClaims, prompt);
       let app1RawData = step1McpRes?.content?.[0]?.text || '';
       let app2RawData = step2McpRes?.content?.[0]?.text || '';
       try { const p1 = JSON.parse(app1RawData); if (p1.data?.content) app1RawData = p1.data.content; } catch {}
@@ -301,10 +342,26 @@ app.post('/api/agent/chat', async (req, res) => {
           redactionsList: step3Redaction.redactionsPerformed
         }
       });
+
+      conversationalTurns.push({
+        turn: 3,
+        name: 'Turn 3: LLM Synthesis & PII Redaction',
+        intent: t3Plan.intent,
+        thought: t3Plan.thought,
+        action: t3Plan.action,
+        tokenExchange: null,
+        invokedTarget: 'Orchestrator In-Memory LLM Engine',
+        redactionSummary: {
+          redactionsPerformed: step3Redaction.redactionsPerformed,
+          executiveSummary: step3Redaction.redactedReport
+        },
+        status: 'SUCCESS'
+      });
     }
 
-    // --- Step 4: Microsoft Graph Email Dispatch ---
+    // --- Turn 4: Direct Orchestrator Microsoft Graph Email Dispatch ---
     if (!halted) {
+      const t4Plan = llmSimulator.planTurn(4, { step3: step3Redaction }, userClaims, prompt);
       const step4 = plan.steps[3];
       const targetRecipient = plan.targetRecipient || 'rtarway@gmail.com';
 
@@ -323,19 +380,31 @@ app.post('/api/agent/chat', async (req, res) => {
         pipelineSteps.push({
           stepNumber: 4,
           name: step4.name,
-          tool: step4.tool,
+          tool: 'microsoft_graph_direct',
           status: 'DENIED_BY_FGP',
           mcpResponse: fgpDenial
+        });
+        conversationalTurns.push({
+          turn: 4,
+          name: 'Turn 4: Direct Microsoft Graph API Dispatch',
+          intent: t4Plan.intent,
+          thought: t4Plan.thought,
+          action: t4Plan.action,
+          tokenExchange: null,
+          invokedTarget: 'Microsoft Graph API (Blocked by Orchestrator FGP)',
+          recipient: targetRecipient,
+          error: fgpDenial,
+          status: 'DENIED_BY_FGP'
         });
         halted = true;
         finalError = fgpDenial;
       } else {
-        // RFC 8693 Token Exchange for Microsoft Graph (Mail.Send)
+        // RFC 8693 Token Exchange for Microsoft Graph (Audience: https://graph.microsoft.com, Scope: Mail.Send)
         step4Exchange = await tokenExchange.exchangeToken({
           userToken,
           agentSvid,
           targetAudience: 'https://graph.microsoft.com',
-          requestedTool: 'send_email_graph'
+          requestedTool: 'microsoft_graph_direct'
         });
 
         // Verify caller has Mail.Send permission
@@ -347,11 +416,11 @@ app.post('/api/agent/chat', async (req, res) => {
         if (!hasMailSend) {
           const authDenial = {
             isError: true,
-            content: [{ type: 'text', text: `MCP Authorization Denied: Principal '${userClaims.sub}' lacks required Microsoft Graph scope 'Mail.Send' to dispatch emails.` }],
+            content: [{ type: 'text', text: `Authorization Denied: Principal '${userClaims.sub}' lacks required Microsoft Graph scope 'Mail.Send' to dispatch emails.` }],
             audit: {
               principal: userClaims.sub,
               actingAgent: agentSvid.spiffeId,
-              requestedTool: 'send_email_graph',
+              requestedTool: 'microsoft_graph_direct',
               requiredScope: 'Mail.Send',
               decision: 'DENIED_BY_POLICY'
             }
@@ -359,45 +428,96 @@ app.post('/api/agent/chat', async (req, res) => {
           pipelineSteps.push({
             stepNumber: 4,
             name: step4.name,
-            tool: step4.tool,
+            tool: 'microsoft_graph_direct',
             status: 'DENIED_BY_POLICY',
             token: step4Exchange.exchangedToken,
             decodedToken: decodeTokenComplete(step4Exchange.exchangedToken),
             mcpResponse: authDenial
           });
+          conversationalTurns.push({
+            turn: 4,
+            name: 'Turn 4: Direct Microsoft Graph API Dispatch',
+            intent: t4Plan.intent,
+            thought: t4Plan.thought,
+            action: t4Plan.action,
+            tokenExchange: {
+              targetAudience: 'https://graph.microsoft.com',
+              requiredScope: 'Mail.Send',
+              token: step4Exchange.exchangedToken,
+              decoded: decodeTokenComplete(step4Exchange.exchangedToken)
+            },
+            invokedTarget: 'Microsoft Graph API (Blocked: Principal lacks Mail.Send)',
+            recipient: targetRecipient,
+            error: authDenial,
+            status: 'DENIED_BY_POLICY'
+          });
           halted = true;
           finalError = authDenial;
         } else {
-          const step4CorrelationId = 'chain-step4-' + (userClaims.email || userClaims.sub || 'user').replace(/[^a-zA-Z0-9]/g, '-') + '-' + crypto.randomUUID().substring(0, 8);
-          step4McpRes = await callMcpServer(
-            MCP_SERVER_URL,
-            step4.tool,
-            {
-              recipient: targetRecipient,
-              subject: step4.arguments.subject,
-              body: step3Redaction.redactedReport,
-              emailConfig: req.body?.emailConfig || {}
-            },
-            step4Exchange.exchangedToken,
-            step4Exchange.delegatedUser,
-            step4CorrelationId
-          );
+          // DIRECT ORCHESTRATOR INVOCATION OF MICROSOFT GRAPH API
+          // Storage MCP server is NOT called; Orchestrator directly dispatches Graph email using Token 3.
+          const graphDeliveryResult = await graphClient.dispatchGraphEmail({
+            graphToken: step4Exchange.exchangedToken,
+            recipient: targetRecipient,
+            subject: step4.arguments.subject,
+            body: step3Redaction.redactedReport,
+            emailConfig: req.body?.emailConfig || {}
+          });
+
+          step4DirectRes = {
+            isError: false,
+            executedDirectlyBy: 'agent-orchestrator',
+            targetApi: 'Microsoft Graph API (https://graph.microsoft.com/v1.0/me/sendMail)',
+            scope: 'Mail.Send',
+            recipient: targetRecipient,
+            graphStatus: `${graphDeliveryResult.graphApiStatus} ${graphDeliveryResult.graphApiStatusText}`,
+            liveGraphAttempted: graphDeliveryResult.liveCallAttempted,
+            deliveryRelay: graphDeliveryResult.deliveryRelay,
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                status: 'success',
+                message: `[Direct Graph Call] Dispatched executive summary to ${targetRecipient} via Microsoft Graph API.`,
+                data: {
+                  directDispatchBy: 'agent-orchestrator',
+                  endpoint: 'https://graph.microsoft.com/v1.0/me/sendMail',
+                  recipient: targetRecipient,
+                  subject: step4.arguments.subject,
+                  graphApiStatus: graphDeliveryResult.graphApiStatus,
+                  deliveryRelay: graphDeliveryResult.deliveryRelay
+                }
+              }, null, 2)
+            }]
+          };
 
           pipelineSteps.push({
             stepNumber: 4,
             name: step4.name,
-            tool: step4.tool,
+            tool: 'microsoft_graph_direct',
             recipient: targetRecipient,
             token: step4Exchange.exchangedToken,
             decodedToken: decodeTokenComplete(step4Exchange.exchangedToken),
-            mcpResponse: step4McpRes,
-            status: step4McpRes.isError ? 'FAILED' : 'SUCCESS'
+            mcpResponse: step4DirectRes,
+            status: 'SUCCESS'
           });
 
-          if (step4McpRes.isError) {
-            halted = true;
-            finalError = step4McpRes;
-          }
+          conversationalTurns.push({
+            turn: 4,
+            name: 'Turn 4: Direct Microsoft Graph API Dispatch',
+            intent: t4Plan.intent,
+            thought: t4Plan.thought,
+            action: t4Plan.action,
+            tokenExchange: {
+              targetAudience: 'https://graph.microsoft.com',
+              requiredScope: 'Mail.Send',
+              token: step4Exchange.exchangedToken,
+              decoded: decodeTokenComplete(step4Exchange.exchangedToken)
+            },
+            invokedTarget: 'Microsoft Graph API (POST /v1.0/me/sendMail) & Option 1 Relay',
+            recipient: targetRecipient,
+            graphDeliveryResult,
+            status: 'SUCCESS'
+          });
         }
       }
     }
@@ -445,7 +565,7 @@ app.post('/api/agent/chat', async (req, res) => {
         fullTokenClaims: step1Exchange.claims
       },
       hop4_storageDelegation: {
-        name: 'Hop 4: JIT Storage / Graph Execution Result',
+        name: 'Hop 4: JIT Storage / Direct Graph Dispatch Result',
         credentialType: halted ? 'Cloud IAM / Policy Denial' : 'Multi-Hop JIT & Graph Dispatch',
         ttlSeconds: 60,
         resource: '/app1 & /app2 -> https://graph.microsoft.com',
@@ -469,6 +589,7 @@ app.post('/api/agent/chat', async (req, res) => {
         workloadVerified: true
       },
       plan,
+      conversationalTurns,
       multiHopExecution: {
         completed: !halted,
         totalSteps: 4,
@@ -481,7 +602,7 @@ app.post('/api/agent/chat', async (req, res) => {
         finalStatus: halted ? 'FAILED_POLICY_CHECK' : 'COMPLETED_SUCCESSFULLY'
       },
       hopToHop: finalHopToHop,
-      mcpResponse: halted ? finalError : (step4McpRes || { isError: false, content: [{ type: 'text', text: 'Multi-hop autonomous pipeline finished successfully.' }] }),
+      mcpResponse: halted ? finalError : (step4DirectRes || { isError: false, content: [{ type: 'text', text: 'Multi-hop autonomous pipeline finished successfully.' }] }),
       status: halted ? 'FAILED_POLICY_CHECK' : 'COMPLETED_SUCCESSFULLY'
     });
   }

@@ -248,11 +248,19 @@
 
                 <!-- Step 4 Card -->
                 <div class="hop-card" id="mh-step4-card" style="padding: 10px;">
-                  <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">STEP 4: GRAPH EMAIL</div>
-                  <div style="font-size: 12px; font-weight: 600; color: var(--text);" id="mh-step4-title">send_email_graph</div>
+                  <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">STEP 4: DIRECT GRAPH</div>
+                  <div style="font-size: 12px; font-weight: 600; color: var(--text);" id="mh-step4-title">Direct Graph (Mail.Send)</div>
                   <div style="font-size: 10px; margin-top: 4px;" id="mh-step4-status"></div>
                 </div>
               </div>
+
+              <!-- Collapsible Turn-by-Turn Agent Reasoning & Hop Trace -->
+              <details id="multihop-turns-details" style="background: var(--card-sub-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 10px;" open>
+                <summary style="cursor: pointer; font-size: 12px; font-weight: 600; color: var(--purple); outline: none;">
+                  🧭 Turn-by-Turn Multi-Hop LLM Decision & Token Delegation Trace
+                </summary>
+                <div id="mh-turns-container" style="margin-top: 10px;"></div>
+              </details>
 
               <!-- Collapsible Redaction & Synthesis Inspector -->
               <details id="multihop-redaction-details" style="background: var(--card-sub-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 10px;" open>
@@ -579,15 +587,54 @@
             document.getElementById('mh-step4-status').innerHTML = '<span style="color: var(--text-muted);">⏸️ SKIPPED</span>';
           }
 
-          // Redaction report details
-          const redactionsList = document.getElementById('mh-redactions-list');
-          const sanitizedBody = document.getElementById('mh-sanitized-body');
-          if (mh.redactionSummary) {
-            document.getElementById('multihop-redaction-details').style.display = 'block';
-            redactionsList.innerHTML = mh.redactionSummary.redactionsPerformed.map(r => `<div>&bull; ${r}</div>`).join('');
-            sanitizedBody.textContent = mh.redactionSummary.executiveSummary;
+          // Turn-by-Turn Conversational Reasoning & Delegation Trace
+          const turns = data.conversationalTurns || [];
+          const turnsContainer = document.getElementById('mh-turns-container');
+          if (turns.length > 0 && turnsContainer) {
+            document.getElementById('multihop-turns-details').style.display = 'block';
+            turnsContainer.innerHTML = turns.map(t => {
+              const isOk = t.status === 'SUCCESS';
+              const badgeClass = isOk ? 'status-success' : 'status-failed';
+              const tokenBadge = t.tokenExchange ? `<span class="hop-tag tag-rfc8693">${t.tokenExchange.requiredScope || 'Token Exchange'}</span>` : '<span class="hop-tag tag-azure">In-Memory LLM</span>';
+              
+              let outputSnippet = '';
+              if (t.returnedToOrchestrator?.content?.[0]?.text) {
+                outputSnippet = `<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;"><strong>📥 Data Returned to Orchestrator:</strong> <pre style="font-size: 10px; color: #a5f3fc; max-height: 80px; overflow-y: auto; margin-top: 2px;">${t.returnedToOrchestrator.content[0].text.substring(0, 300)}...</pre></div>`;
+              } else if (t.graphDeliveryResult) {
+                const gr = t.graphDeliveryResult;
+                outputSnippet = `<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;"><strong>🌐 Direct Graph API Dispatch:</strong> <span style="color: var(--success); font-family: monospace;">HTTP ${gr.graphApiStatus} ${gr.graphApiStatusText} ➔ Delivered via ${gr.deliveryRelay?.provider || 'Relay'}</span></div>`;
+              } else if (t.error) {
+                outputSnippet = `<div style="font-size: 11px; color: var(--danger); margin-top: 4px;"><strong>❌ Block Reason:</strong> ${t.error.content?.[0]?.text || t.error.audit?.decision}</div>`;
+              }
+
+              return `
+                <div class="hop-card ${isOk ? 'success' : 'denied'}" style="margin-bottom: 8px; padding: 10px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <div style="font-weight: 700; font-size: 12px; display: flex; align-items: center; gap: 8px;">
+                      <span>Turn ${t.turn}: ${t.name}</span>
+                      ${tokenBadge}
+                    </div>
+                    <span class="status-badge ${badgeClass}" style="font-size: 10px;">${t.status}</span>
+                  </div>
+                  <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
+                    <strong style="color: var(--purple);">🧠 LLM Intent & Reason:</strong> <span style="color: var(--text);">${t.thought}</span>
+                  </div>
+                  <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
+                    <strong>🎯 Invoked Target:</strong> <span style="color: var(--primary); font-family: monospace;">${t.invokedTarget}</span>
+                  </div>
+                  ${outputSnippet}
+                  ${t.tokenExchange?.decoded ? `
+                    <details style="margin-top: 6px;">
+                      <summary style="cursor: pointer; font-size: 10px; color: var(--primary); font-weight: 600;">📜 View Token Claims for this Hop (aud: ${t.tokenExchange.targetAudience})</summary>
+                      <pre style="font-size: 10px; margin-top: 4px; max-height: 120px; overflow-y: auto;">${JSON.stringify(t.tokenExchange.decoded, null, 2)}</pre>
+                    </details>
+                  ` : ''}
+                </div>
+              `;
+            }).join('');
           } else {
-            document.getElementById('multihop-redaction-details').style.display = 'none';
+            const td = document.getElementById('multihop-turns-details');
+            if (td) td.style.display = 'none';
           }
         } else {
           mhTracker.style.display = 'none';
