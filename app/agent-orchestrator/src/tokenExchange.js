@@ -92,7 +92,7 @@ class TokenExchangeEngine {
     let requiredScopeForTool = 'mcp:tool1';
     if (requestedTool === 'tool2') {
       requiredScopeForTool = 'mcp:tool2';
-    } else if (requestedTool === 'send_email_graph' || requestedTool === 'Mail.Send') {
+    } else if (requestedTool === 'microsoft_graph_direct' || requestedTool === 'send_email_graph' || requestedTool === 'Mail.Send' || targetAudience === 'https://graph.microsoft.com') {
       requiredScopeForTool = 'Mail.Send';
       if (targetAudience === ENTRA_AUDIENCE) {
         targetAudience = 'https://graph.microsoft.com';

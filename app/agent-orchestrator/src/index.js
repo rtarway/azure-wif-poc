@@ -565,19 +565,60 @@ app.post('/api/agent/chat', async (req, res) => {
         fullTokenClaims: step1Exchange.claims
       },
       hop4_storageDelegation: {
-        name: 'Hop 4: JIT Storage / Direct Graph Dispatch Result',
-        credentialType: halted ? 'Cloud IAM / Policy Denial' : 'Multi-Hop JIT & Graph Dispatch',
+        name: 'Hop 4: JIT Storage Execution Result (MCP ➔ Azure Storage)',
+        credentialType: (step1McpRes?.isError || step2McpRes?.isError) ? 'Cloud IAM / Policy Denial' : 'Azure Storage JIT Access (app1 & app2)',
         ttlSeconds: 60,
-        resource: '/app1 & /app2 -> https://graph.microsoft.com',
+        resource: '/app1 & /app2',
         storageAccount: 'azwifstoragepocrt',
-        cloudIamStatus: halted ? (finalError?.cloudIAMDecision || 'DENIED_BY_POLICY') : 'ALLOWED (HTTP 200 & HTTP 202)',
-        rawToken: 'Multi-Hop Pipeline Executed',
+        cloudIamStatus: (step1McpRes?.isError || step2McpRes?.isError) ? ((step1McpRes || step2McpRes)?.cloudIAMDecision || 'DENIED_BY_POLICY') : 'ALLOWED (HTTP 200 via Azure Storage Native RBAC)',
+        rawToken: 'Azure Storage Read Complete',
         decodedToken: {
-          pipelineCompleted: !halted,
-          stepsCompleted: pipelineSteps.length,
-          lastError: finalError ? (finalError.cloudIAMDecision || finalError.content?.[0]?.text) : null
+          app1: step1McpRes ? { status: step1Status, resource: '/app1/financial-report.json' } : null,
+          app2: step2McpRes ? { status: step2McpRes.isError ? (step2McpRes.cloudIAMDecision || 'FAILED') : 'SUCCESS', resource: '/app2/customer-metrics.json' } : null
         }
-      }
+      },
+      hop5_graphToken: step4Exchange ? {
+        name: 'Hop 5: RFC 8693 Downscoped Delegated Token (Orchestrator ➔ Microsoft Graph)',
+        tokenType: 'RFC 8693 Delegated Access Token',
+        sub: step4Exchange.claims.sub,
+        aud: step4Exchange.claims.aud || 'https://graph.microsoft.com',
+        scope: step4Exchange.claims.roles || step4Exchange.claims.scope || 'Mail.Send',
+        ttlSeconds: 300,
+        act: step4Exchange.claims.act,
+        delegationType: 'RFC8693_GRAPH_TOKEN_EXCHANGE',
+        signatureStatus: 'VALID_CRYPTOGRAPHIC_CHAIN',
+        rawToken: step4Exchange.exchangedToken,
+        decodedToken: decodeTokenComplete(step4Exchange.exchangedToken),
+        fullTokenClaims: step4Exchange.claims
+      } : {
+        name: 'Hop 5: RFC 8693 Downscoped Delegated Token (Microsoft Graph)',
+        status: halted ? 'NOT_EVALUATED_HALTED_EARLIER' : 'NOT_MINTED'
+      },
+      hop6_graphExecution: step4DirectRes ? {
+        name: 'Hop 6: Microsoft Graph API Direct Execution (Orchestrator ➔ Graph API)',
+        targetEndpoint: 'https://graph.microsoft.com/v1.0/me/sendMail',
+        invokedDirectlyBy: 'agent-orchestrator (Azure Storage MCP Server Bypassed)',
+        recipient: plan.targetRecipient || 'rtarway@gmail.com',
+        subject: '[Executive Summary] Redacted Financial & Customer Metrics (app1 + app2)',
+        graphStatus: step4DirectRes.graphStatus || 'HTTP 202 Accepted',
+        deliveryRelay: step4DirectRes.deliveryRelay,
+        rawToken: 'Bearer ' + (step4Exchange?.exchangedToken || 'N/A'),
+        decodedToken: {
+          targetApi: 'Microsoft Graph API v1.0',
+          method: 'POST /v1.0/me/sendMail',
+          delegatedSubject: userClaims.sub,
+          actingAgent: agentSvid.spiffeId,
+          scopeEnforced: 'Mail.Send',
+          dispatchedTo: plan.targetRecipient || 'rtarway@gmail.com',
+          deliveryRelay: step4DirectRes.deliveryRelay
+        }
+      } : (halted && finalError?.audit?.requestedTool === 'microsoft_graph_direct' ? {
+        name: 'Hop 6: Microsoft Graph API Direct Execution (Blocked)',
+        targetEndpoint: 'https://graph.microsoft.com/v1.0/me/sendMail',
+        status: finalError?.audit?.decision || 'DENIED_BY_POLICY',
+        reason: finalError?.content?.[0]?.text,
+        dispatched: false
+      } : null)
     };
 
     return res.json({

@@ -405,6 +405,73 @@
                   <pre id="hop4-raw" style="font-size: 10px; color: #94a3b8; word-break: break-all; margin-top: 4px;"></pre>
                 </details>
               </div>
+
+              <!-- Hop 5: RFC 8693 Delegated Token for Microsoft Graph -->
+              <div class="hop-card" id="card-hop5" style="display: none;">
+                <div class="hop-header">
+                  <div class="hop-title">
+                    <span>🌐 Hop 5: RFC 8693 Delegated Token (Orchestrator ➔ Microsoft Graph)</span>
+                    <span class="hop-tag tag-rfc8693">OBO Graph Token</span>
+                  </div>
+                  <span class="status-badge" id="hop5-status"></span>
+                </div>
+                <div class="claim-grid">
+                  <div class="claim-label">Delegated Subject (sub):</div>
+                  <div class="claim-value" id="hop5-sub"></div>
+                  <div class="claim-label">Target Audience (aud):</div>
+                  <div class="claim-value claim-highlight" id="hop5-aud">https://graph.microsoft.com</div>
+                  <div class="claim-label">Downscoped Scope:</div>
+                  <div class="claim-value claim-highlight" id="hop5-scope">Mail.Send</div>
+                  <div class="claim-label">Token TTL:</div>
+                  <div class="claim-value" id="hop5-ttl">300s (Short-Lived Downscoped)</div>
+                  <div class="claim-label">RFC 8693 act Claim:</div>
+                  <div class="claim-value">
+                    <div class="claim-act-box" id="hop5-act-box">
+                      <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Cryptographically Verifiable Actor Chain:</div>
+                      <pre id="hop5-act" style="margin: 0; padding: 6px;"></pre>
+                    </div>
+                  </div>
+                </div>
+                <details open style="margin-top: 10px;">
+                  <summary style="cursor: pointer; font-size: 11px; font-weight: 600; color: var(--primary); outline: none;">📜 Decoded RFC 8693 Microsoft Graph Delegated Token (Full Claims with act chain)</summary>
+                  <pre id="hop5-decoded" style="margin-top: 6px;"></pre>
+                </details>
+                <details style="margin-top: 6px;">
+                  <summary style="cursor: pointer; font-size: 10px; color: var(--text-muted); outline: none;">🔑 View Raw Encoded RFC 8693 Graph Token</summary>
+                  <pre id="hop5-raw" style="font-size: 10px; color: #94a3b8; word-break: break-all; margin-top: 4px;"></pre>
+                </details>
+              </div>
+
+              <!-- Hop 6: Direct Microsoft Graph API Execution -->
+              <div class="hop-card" id="card-hop6" style="display: none;">
+                <div class="hop-header">
+                  <div class="hop-title">
+                    <span>📧 Hop 6: Direct Microsoft Graph API Execution (Orchestrator ➔ Graph API)</span>
+                    <span class="hop-tag tag-azure">Direct Dispatch</span>
+                  </div>
+                  <span class="status-badge" id="hop6-status"></span>
+                </div>
+                <div class="claim-grid">
+                  <div class="claim-label">Direct Invoker:</div>
+                  <div class="claim-value claim-highlight" id="hop6-invoker">agent-orchestrator (Azure Storage MCP Server Bypassed)</div>
+                  <div class="claim-label">Target Endpoint:</div>
+                  <div class="claim-value" id="hop6-endpoint">POST https://graph.microsoft.com/v1.0/me/sendMail</div>
+                  <div class="claim-label">Authorized Recipient:</div>
+                  <div class="claim-value claim-highlight" id="hop6-recipient">rtarway@gmail.com</div>
+                  <div class="claim-label">Graph API Decision:</div>
+                  <div class="claim-value" id="hop6-decision"></div>
+                  <div class="claim-label">Option 1 Delivery Relay:</div>
+                  <div class="claim-value" id="hop6-relay"></div>
+                </div>
+                <details open style="margin-top: 10px;">
+                  <summary style="cursor: pointer; font-size: 11px; font-weight: 600; color: var(--primary); outline: none;">📜 Decoded Graph API Response & Delivery Audit</summary>
+                  <pre id="hop6-decoded" style="margin-top: 6px;"></pre>
+                </details>
+                <details style="margin-top: 6px;">
+                  <summary style="cursor: pointer; font-size: 10px; color: var(--text-muted); outline: none;">🔑 View Outbound Graph Request Headers & Bearer Token</summary>
+                  <pre id="hop6-raw" style="font-size: 10px; color: #94a3b8; word-break: break-all; margin-top: 4px;"></pre>
+                </details>
+              </div>
             </div>
 
             <!-- Execution Result Audit Box -->
@@ -739,6 +806,88 @@
 
           document.getElementById('hop4-decoded').textContent = JSON.stringify(h4.decodedToken || {}, null, 2);
           document.getElementById('hop4-raw').textContent = h4.rawToken || 'N/A';
+        }
+
+        // Hop 5: RFC 8693 Delegated Token for Microsoft Graph
+        const h5 = hop.hop5_graphToken;
+        const cardHop5 = document.getElementById('card-hop5');
+        const hop5Status = document.getElementById('hop5-status');
+        const hop5ActBox = document.getElementById('hop5-act-box');
+
+        // Hop 6: Direct Microsoft Graph API Execution
+        const h6 = hop.hop6_graphExecution;
+        const cardHop6 = document.getElementById('card-hop6');
+        const hop6Status = document.getElementById('hop6-status');
+
+        if (h5 && (h5.rawToken || h5.sub || h5.decodedToken || data.multiHopExecution)) {
+          cardHop5.style.display = 'block';
+          const isH5Denied = h5.status === 'DENIED_BY_POLICY' || (data.multiHopExecution?.steps?.[3]?.status === 'DENIED_BY_POLICY');
+          const isH5NotMinted = h5.status === 'NOT_MINTED' || h5.status === 'NOT_EVALUATED_HALTED_EARLIER';
+          
+          if (isH5NotMinted) {
+            cardHop5.className = 'hop-card warning';
+            hop5Status.className = 'status-badge status-neutral';
+            hop5Status.textContent = 'NOT MINTED';
+            document.getElementById('hop5-sub').textContent = 'N/A';
+            document.getElementById('hop5-aud').textContent = 'https://graph.microsoft.com';
+            document.getElementById('hop5-scope').textContent = 'Mail.Send (Halted)';
+            document.getElementById('hop5-ttl').textContent = 'N/A';
+            document.getElementById('hop5-act').textContent = 'Pipeline halted before Graph token exchange.';
+            document.getElementById('hop5-decoded').textContent = JSON.stringify({ error: 'Token not minted' }, null, 2);
+            document.getElementById('hop5-raw').textContent = 'N/A';
+          } else {
+            cardHop5.className = 'hop-card ' + (isH5Denied ? 'denied' : 'success');
+            hop5Status.className = 'status-badge ' + (isH5Denied ? 'status-failed' : 'status-success');
+            hop5Status.textContent = isH5Denied ? 'MAIL.SEND DENIED' : 'GRAPH OBO VALIDATED';
+
+            document.getElementById('hop5-sub').textContent = h5.sub || data.user?.sub || 'N/A';
+            document.getElementById('hop5-aud').textContent = h5.aud || 'https://graph.microsoft.com';
+            document.getElementById('hop5-scope').textContent = Array.isArray(h5.scope) ? h5.scope.join(' ') : (h5.scope || 'Mail.Send');
+            document.getElementById('hop5-ttl').textContent = (h5.ttlSeconds || 300) + 's (Short-Lived Downscoped)';
+            document.getElementById('hop5-act').textContent = JSON.stringify(h5.act || {
+              sub: 'spiffe://example.org/ns/agent-system/sa/orchestrator-sa',
+              iss: 'https://spire.agent-system.svc.cluster.local',
+              client_id: 'orchestrator-workload-identity'
+            }, null, 2);
+
+            document.getElementById('hop5-decoded').textContent = JSON.stringify(h5.decodedToken || h5.fullTokenClaims || {}, null, 2);
+            document.getElementById('hop5-raw').textContent = h5.rawToken || 'N/A';
+          }
+        } else {
+          cardHop5.style.display = 'none';
+        }
+
+        if (h6 || (data.multiHopExecution && data.multiHopExecution.executedSteps >= 4)) {
+          cardHop6.style.display = 'block';
+          const s4 = data.multiHopExecution?.steps?.[3];
+          const isH6Ok = s4?.status === 'SUCCESS' || h6?.graphStatus?.includes('200') || h6?.graphStatus?.includes('202');
+          
+          cardHop6.className = 'hop-card ' + (isH6Ok ? 'success' : 'denied');
+          hop6Status.className = 'status-badge ' + (isH6Ok ? 'status-success' : 'status-failed');
+          hop6Status.textContent = isH6Ok ? 'HTTP 202 ACCEPTED' : (s4?.status || 'DENIED');
+
+          document.getElementById('hop6-recipient').textContent = h6?.recipient || s4?.recipient || 'rtarway@gmail.com';
+          document.getElementById('hop6-decision').innerHTML = isH6Ok
+            ? '<span style="color: var(--success); font-weight: 600;">ALLOWED (HTTP 202 Accepted via Microsoft Graph API)</span>'
+            : `<span style="color: var(--danger); font-weight: 600;">${s4?.mcpResponse?.content?.[0]?.text || s4?.status || 'DENIED_BY_POLICY'}</span>`;
+
+          const relay = h6?.deliveryRelay || (function() {
+            try { return JSON.parse(s4?.mcpResponse?.content?.[0]?.text)?.data?.deliveryRelay; } catch { return null; }
+          })();
+
+          let relayText = 'Zero Email Dispatched (Blocked)';
+          if (isH6Ok) {
+            if (relay?.delivered) relayText = `✅ Delivered via ${relay.provider} (ID: ${relay.messageId || 'OK'})`;
+            else if (relay?.provider === 'unconfigured') relayText = '⚠️ Graph validated (Set API Key to deliver)';
+            else if (relay?.error) relayText = `⚠️ ${relay.provider || 'Relay'}: ${relay.error}`;
+            else relayText = '✅ Direct Graph API Accepted';
+          }
+          document.getElementById('hop6-relay').innerHTML = `<span style="color: ${isH6Ok ? 'var(--success)' : 'var(--danger)'}; font-weight: 600;">${relayText}</span>`;
+
+          document.getElementById('hop6-decoded').textContent = JSON.stringify(h6?.decodedToken || s4?.mcpResponse || {}, null, 2);
+          document.getElementById('hop6-raw').textContent = h6?.rawToken || (s4?.token ? `Bearer ${s4.token}` : 'N/A');
+        } else {
+          cardHop6.style.display = 'none';
         }
 
         // Trace MCP Raw Output
