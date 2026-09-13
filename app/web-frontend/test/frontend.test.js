@@ -127,23 +127,46 @@ describe('Web Frontend Tests (Outside SPIRE)', () => {
     assert.strictEqual(res.body.user.username, 'alice');
     assert.ok(res.body.user.scopes.includes('mcp:tool2'));
     assert.ok(res.body.user.scopes.includes('Mail.Send'));
+    assert.ok(res.body.keycloakToken);
+    assert.ok(res.body.entraToken);
   });
 
-  test('POST /api/login for UI userType alice-no-mail issues token without Mail.Send scope', async () => {
+  test('POST /api/login for Charlie issues token without Mail.Send scope', async () => {
     const res = await invokeApp(app, {
       method: 'POST',
       url: '/api/login',
-      body: { userType: 'alice-no-mail' }
+      body: { userType: 'charlie' }
     });
 
     assert.strictEqual(res.statusCode, 200);
-    assert.strictEqual(res.body.user.username, 'alice-no-mail');
+    assert.strictEqual(res.body.user.username, 'charlie');
     assert.ok(res.body.user.scopes.includes('mcp:tool1'));
     assert.ok(res.body.user.scopes.includes('mcp:tool2'));
     assert.ok(!res.body.user.scopes.includes('Mail.Send'));
+    assert.ok(res.body.keycloakToken);
+    assert.ok(res.body.entraToken);
 
     const decoded = jwtUtil.decode(res.body.token);
+    assert.strictEqual(decoded.sub, 'charlie@rtarwaygmail.onmicrosoft.com');
     assert.strictEqual(decoded.scope, 'mcp:tool1 mcp:tool2');
+
+    const decodedEntra = jwtUtil.decode(res.body.entraToken);
+    assert.strictEqual(decodedEntra.sub, 'charlie@rtarwaygmail.onmicrosoft.com');
+    assert.strictEqual(decodedEntra.scope, 'mcp:tool1 mcp:tool2');
+  });
+
+  test('GET /api/users returns Alice, Bob, and Charlie with credentials and permissions', async () => {
+    const res = await invokeApp(app, {
+      method: 'GET',
+      url: '/api/users'
+    });
+
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.body.users.length, 3);
+    assert.strictEqual(res.body.users[0].username, 'alice');
+    assert.strictEqual(res.body.users[1].username, 'bob');
+    assert.strictEqual(res.body.users[2].username, 'charlie');
+    assert.strictEqual(res.body.users[0].password, 'Password123!');
   });
 
   test('POST /api/login for UI userType bob switches properly to Bob', async () => {
@@ -156,6 +179,8 @@ describe('Web Frontend Tests (Outside SPIRE)', () => {
     assert.strictEqual(res.statusCode, 200);
     assert.strictEqual(res.body.user.username, 'bob');
     assert.ok(!res.body.user.scopes.includes('mcp:tool2'));
+    assert.ok(res.body.keycloakToken);
+    assert.ok(res.body.entraToken);
   });
 
   test('POST /api/chat forwards prompt and token to agent orchestrator', async () => {

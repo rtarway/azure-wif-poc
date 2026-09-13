@@ -26,47 +26,69 @@ app.get('/healthz', (req, res) => {
   });
 });
 
+const ENTRA_TENANT_ID = process.env.ENTRA_TENANT_ID || '81f26b58-159c-4879-80a0-bab30b5b4dd3';
+const ENTRA_CLIENT_ID = process.env.ENTRA_CLIENT_ID || 'a23206e1-2dda-4854-aac7-0536d2da2c4c';
+const ENTRA_AUDIENCE = process.env.ENTRA_AUDIENCE || 'api://d5850aa0-a667-41c3-8dd0-16f2dee4da25';
+
+const USER_CONFIGS = {
+  alice: {
+    username: 'alice',
+    password: 'Password123!',
+    email: 'alice@rtarwaygmail.onmicrosoft.com',
+    displayName: 'Alice (Auditor / Storage Reader / Mail.Send)',
+    roles: ['admin', 'auditor', 'Storage Blob Data Reader', 'Mail.Send'],
+    scopes: ['mcp:tool1', 'mcp:tool2', 'Mail.Send'],
+    azureRole: 'Storage Blob Data Reader (app1 & app2) + Entra Mail.Send',
+    description: 'Authorized on Storage (app1 & app2) AND Microsoft Graph Mail.Send.'
+  },
+  bob: {
+    username: 'bob',
+    password: 'Password123!',
+    email: 'bob@rtarwaygmail.onmicrosoft.com',
+    displayName: 'Bob (Data Contributor on app2 / No app1 Role)',
+    roles: ['regular-user', 'Storage Blob Data Contributor'],
+    scopes: ['mcp:tool1'],
+    azureRole: 'Storage Blob Data Contributor (app2 ONLY; No app1 role; No Graph access)',
+    description: 'Contributor on app2 only. Blocked on app1 by Azure Storage Cloud IAM; No Graph access.'
+  },
+  charlie: {
+    username: 'charlie',
+    password: 'Password123!',
+    email: 'charlie@rtarwaygmail.onmicrosoft.com',
+    displayName: 'Charlie (Storage Reader / NO Graph Mail.Send)',
+    roles: ['auditor', 'Storage Blob Data Reader'],
+    scopes: ['mcp:tool1', 'mcp:tool2'],
+    azureRole: 'Storage Blob Data Reader (app1 & app2) - Zero Microsoft Graph Permissions',
+    description: 'Storage reader on app1 & app2, but strictly lacks Microsoft Graph Mail.Send scope on Keycloak and Entra ID.'
+  }
+};
+// Backward compatibility alias
+USER_CONFIGS['alice-no-mail'] = USER_CONFIGS.charlie;
+
+// Pre-configured Users List Endpoint for POC Login Screen
+app.get('/api/users', (req, res) => {
+  res.json({
+    users: [USER_CONFIGS.alice, USER_CONFIGS.bob, USER_CONFIGS.charlie]
+  });
+});
+
 // Authentication Endpoint: Keycloak Login Simulation & Direct Grant
 app.post('/api/login', async (req, res) => {
   const { username, password, userType } = req.body || {};
 
   let resolvedUser = 'bob';
-  if (userType === 'alice-no-mail' || username === 'alice-no-mail') {
-    resolvedUser = 'alice-no-mail';
+  if (userType === 'charlie' || username === 'charlie' || userType === 'alice-no-mail' || username === 'alice-no-mail') {
+    resolvedUser = 'charlie';
   } else if (userType === 'admin' || userType === 'alice' || username === 'alice') {
     resolvedUser = 'alice';
   } else if (username === 'bob' || userType === 'regular-user' || userType === 'bob') {
     resolvedUser = 'bob';
   }
 
-  const userConfigs = {
-    alice: {
-      username: 'alice',
-      email: 'alice@rtarwaygmail.onmicrosoft.com',
-      displayName: 'Alice (Auditor / Storage Reader / Mail.Send)',
-      roles: ['admin', 'auditor', 'Storage Blob Data Reader', 'Mail.Send'],
-      scopes: ['mcp:tool1', 'mcp:tool2', 'Mail.Send']
-    },
-    'alice-no-mail': {
-      username: 'alice-no-mail',
-      email: 'alice@rtarwaygmail.onmicrosoft.com',
-      displayName: 'Alice (Storage Reader Only / NO Graph Mail.Send)',
-      roles: ['auditor', 'Storage Blob Data Reader'],
-      scopes: ['mcp:tool1', 'mcp:tool2'] // Explicitly lacks Mail.Send
-    },
-    bob: {
-      username: 'bob',
-      email: 'bob@rtarwaygmail.onmicrosoft.com',
-      displayName: 'Bob (Data Contributor on app2 / No app1 Role)',
-      roles: ['regular-user', 'Storage Blob Data Contributor'],
-      scopes: ['mcp:tool1']
-    }
-  };
+  const user = USER_CONFIGS[resolvedUser] || USER_CONFIGS.bob;
 
-  const user = userConfigs[resolvedUser];
-
-  // Mint standard Keycloak Bearer Token
-  const token = jwtUtil.sign(
+  // 1. Mint Keycloak OIDC Bearer Token
+  const keycloakToken = jwtUtil.sign(
     {
       iss: `${KEYCLOAK_URL}/realms/azure-wif-realm`,
       sub: user.email,
@@ -83,10 +105,33 @@ app.post('/api/login', async (req, res) => {
     { expiresInSeconds: 3600 }
   );
 
+  // 2. Mint Microsoft Entra ID User Subject Token
+  const entraToken = jwtUtil.sign(
+    {
+      iss: `https://login.microsoftonline.com/${ENTRA_TENANT_ID}/v2.0`,
+      tid: ENTRA_TENANT_ID,
+      aud: ENTRA_AUDIENCE,
+      sub: user.email,
+      upn: user.email,
+      email: user.email,
+      name: user.displayName,
+      appid: ENTRA_CLIENT_ID,
+      azp: ENTRA_CLIENT_ID,
+      roles: user.roles,
+      scp: user.scopes.join(' '),
+      scope: user.scopes.join(' '),
+      identityProvider: 'EntraID'
+    },
+    JWT_SECRET,
+    { expiresInSeconds: 3600 }
+  );
+
   return res.json({
     authenticated: true,
     user,
-    token
+    token: keycloakToken, // Primary token used by orchestrator
+    keycloakToken,
+    entraToken
   });
 });
 
